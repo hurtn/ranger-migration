@@ -57,7 +57,8 @@ create table ranger_policies (
     Accesses  NVARCHAR(2000),
     [Service Type]  NVARCHAR(100),
     Status  NVARCHAR(100),
-    checksum NVARCHAR(400))
+    checksum NVARCHAR(400),
+    CONSTRAINT "PK_Policies" PRIMARY KEY CLUSTERED ("ID") )
 
 ,
 

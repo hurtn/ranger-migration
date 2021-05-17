@@ -52,7 +52,7 @@ def storePolicies():
                         cursor.fast_executemany = True
 
 
-            for allpolicies in pd.read_csv(r"C:\workspace\rangermigration\PolicySampleClean.csv", chunksize=batchsize,names=collist):
+            for allpolicies in pd.read_csv(r"C:\workspace\rangermigration\NHPolicySample.csv", chunksize=batchsize,names=collist):
               hdfspolicies = allpolicies[(allpolicies['Service Type']=='hdfs')]
               #print(hdfspolicies.head())
               hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")

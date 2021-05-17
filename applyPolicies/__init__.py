@@ -83,15 +83,36 @@ def getPolicyChanges():
             print(insertdf)
             if not insertdf.empty:
                 #there are changes to process. first obtain an AAD token
-                aadtoken = getBearerToken()
-                for row in insertdf.loc[:, ['Resources','Groups','Users']].itertuples():
-                    userentries = row.Users.split(",")
-                    for userentry in userentries:
-                        #print("user: "+userentry.strip())
-                        hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
-                        for hdfsentry in hdfsentries:
-                            #print("path: "+hdfsentry.strip())
-                            setADLSPermissions(aadtoken, userentry.strip(), hdfsentry.strip())
+                storagetoken = getBearerToken("storage.azure.com")
+                graphtoken = getBearerToken("graph.microsoft.com")
+                for row in insertdf.loc[:, ['Resources','Groups','Users','Accesses']].itertuples():
+                    permstr=''
+                    perms = row.Accesses.split(",")
+                    for perm in perms:
+                        if perm.strip() == 'read': permstr='r'
+                        elif perm.strip() == 'write': permstr+='w'
+                        elif perm.strip() == 'execute': permstr+='x'
+                        else: permstr+='-'
+
+                    if row.Users is not None and len(row.Users)>0:
+                        userentries = row.Users.split(",")
+                        for userentry in userentries:
+                            #print("user: "+userentry.strip())
+                            hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                #print("path: "+hdfsentry.strip())
+                                spnid = getSPID(graphtoken,userentry.strip(),'users')
+                                setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
+                    if row.Groups is not None and len(row.Groups)>0:
+                        groupentries = row.Groups.split(",")
+                        for groupentry in groupentries:
+                            #print("user: "+userentry.strip())
+                            hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                #print("path: "+hdfsentry.strip())
+                                spnid = getSPID(graphtoken,groupentry.strip(),'groups')
+                                setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'group')
+
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -106,33 +127,53 @@ def getPolicyChanges():
 
 
 
-def setADLSPermissions(aadtoken, spn, adlpath):
-
-    print(spn + '-' + adlpath)
+def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
+    basestorageuri = 'https://baselake.dfs.core.windows.net/base1'
+    spnaccsuffix = ''
+    #print(spn + '-' + adlpath)
     #https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
     #Setup the endpoint
     puuid = str(uuid.uuid4())
     #print('Log analytics UUID'+ puuid)
-    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:nihurt@microsoft.com:r-x,default:user:nihurt@microsoft.com:r-x','x-ms-client-request-id': '%s' % puuid}
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid}
+    request_path = basestorageuri+adlpath+"?mode=modify&action=setAccessControl"
+    print(str(headers))
+    print("directpath: " + request_path)
+    r = requests.patch(request_path, headers=headers)
+    print(r.status_code)
 
-    #r = requests.patch("https://baselake.dfs.core.windows.net/curated/customers?action=setAccessControl", headers=headers)
-    #print(r.status_code)
+    #puuid = str(uuid.uuid4())
+    #print('Log analytics UUID'+ puuid)
+    #headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:'+spn+'@'+spnaccsuffix + ':r-x,default:user:'+spn+'@'+spnaccsuffix + ':r-x','x-ms-client-request-id': '%s' % puuid}
+    request_path = request_path + "Recursive"
 
-    puuid = str(uuid.uuid4())
-    print('Log analytics UUID'+ puuid)
-    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:nihurt@microsoft.com:r-x,default:user:nihurt@microsoft.com:r-x','x-ms-client-request-id': '%s' % puuid}
+    print("recursive: " + request_path)
+    r = requests.patch(request_path, headers=headers)
+    print(r.headers)  
 
-    #r = requests.patch("https://baselake.dfs.core.windows.net/curated/customers?action=setAccessControlRecursive&mode=modify", headers=headers)
-    #print(r.headers)  
+def getSPID(aadtoken, spn, spntype):
+    if spntype == 'users': odatafilterfield = "userPrincipalName"
+    else: odatafilterfield = "displayName"
+    headers ={'Content-Type': 'application/json','Authorization': 'Bearer %s' % aadtoken}
+    request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startswith("+odatafilterfield+",'"+spn.replace('#','%23')+"')"
+    #https://graph.microsoft.com/v1.0/users?$filter=startswith(userPrincipalName,'nihurt@microsoft.com')
+    print(aadtoken)
+    print(request_str)
+    r = requests.get(request_str, headers=headers)
+    response = r.json()
+    print("Searching for SPN ID")
+    print(response)
+    return response["value"][0]["id"]
+    
 
-
-def getBearerToken():
+def getBearerToken(resourcetype):
     endpoint = 'https://login.microsoftonline.com/af26513a-fe59-4005-967d-bd744f659830/oauth2/token'
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    payload = 'grant_type=client_credentials&client_id=a86005a7-2865-4db4-8c0f-305247a0544e&client_secret=z0BYa3~7~qjY~Qfg7Q2.1_U~D3Hgb0vu~z&resource=https%3A%2F%2Fstorage.azure.com%2F'
+    payload = 'grant_type=client_credentials&client_id=a86005a7-2865-4db4-8c0f-305247a0544e&client_secret=z0BYa3~7~qjY~Qfg7Q2.1_U~D3Hgb0vu~z&resource=https%3A%2F%2F'+resourcetype+'%2F'
     r = requests.post(endpoint, headers=headers, data=payload)
     response = r.json()
     print("Obtaining AAD bearer token...")
+    #print(response)
     bearertoken = response["access_token"]
     #print(bearertoken)
     print("Bearer token obtained :) ")
