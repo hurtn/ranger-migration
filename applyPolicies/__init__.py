@@ -8,7 +8,8 @@ from sqlalchemy import create_engine
 from sqlalchemy import event
 import sqlalchemy
 import azure.functions as func
-
+import requests,uuid
+from requests.auth import HTTPBasicAuth
 
 def main(mytimer: func.TimerRequest) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(
@@ -21,7 +22,7 @@ def main(mytimer: func.TimerRequest) -> None:
     #storePolicy()
    
 
-def applyPolicies():
+def getPolicyChanges():
     try:
                 # configure database params
             dbname = "policystore"
@@ -71,28 +72,74 @@ def applyPolicies():
             changessql = changessql + """            
             select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status] 
             from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all');"""
-            #changessql = "SELECT name, db_name() FROM sys.databases"
+
             print(changessql)
-            #cursor.execute(changessql)
-            #row = cursor.fetchone()
-            #while row:
-                #print(str(row[1]))
-                #row = cursor.fetchone()
 
             changesdf= pandas.io.sql.read_sql(changessql, cnxn)
             #print(changesdf)
+
+            # filter by new policies entries
             insertdf = changesdf[(changesdf['__$operation']==2)]
             print(insertdf)
-#    except pyodbc.DatabaseError as err:
- #           cnxn.commit()
-  #          sqlstate = err.args[1]
-   #         sqlstate = sqlstate.split(".")
-    #        print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
-    #else:
-     #       cnxn.commit()
-      #      print('Successfully processed file!')
+            if not insertdf.empty:
+                #there are changes to process. first obtain an AAD token
+                aadtoken = getBearerToken()
+                for row in insertdf.loc[:, ['Resources','Groups','Users']].itertuples():
+                    userentries = row.Users.split(",")
+                    for userentry in userentries:
+                        #print("user: "+userentry.strip())
+                        hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
+                        for hdfsentry in hdfsentries:
+                            #print("path: "+hdfsentry.strip())
+                            setADLSPermissions(aadtoken, userentry.strip(), hdfsentry.strip())
+
+    except pyodbc.DatabaseError as err:
+            cnxn.commit()
+            sqlstate = err.args[1]
+            sqlstate = sqlstate.split(".")
+            print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
+    else:
+            cnxn.commit()
+            print('Successfully processed file!')
     finally:
             cnxn.autocommit = True
 
-applyPolicies()
+
+
+def setADLSPermissions(aadtoken, spn, adlpath):
+
+    print(spn + '-' + adlpath)
+    #https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
+    #Setup the endpoint
+    puuid = str(uuid.uuid4())
+    #print('Log analytics UUID'+ puuid)
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:nihurt@microsoft.com:r-x,default:user:nihurt@microsoft.com:r-x','x-ms-client-request-id': '%s' % puuid}
+
+    #r = requests.patch("https://baselake.dfs.core.windows.net/curated/customers?action=setAccessControl", headers=headers)
+    #print(r.status_code)
+
+    puuid = str(uuid.uuid4())
+    print('Log analytics UUID'+ puuid)
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:nihurt@microsoft.com:r-x,default:user:nihurt@microsoft.com:r-x','x-ms-client-request-id': '%s' % puuid}
+
+    #r = requests.patch("https://baselake.dfs.core.windows.net/curated/customers?action=setAccessControlRecursive&mode=modify", headers=headers)
+    #print(r.headers)  
+
+
+def getBearerToken():
+    endpoint = 'https://login.microsoftonline.com/af26513a-fe59-4005-967d-bd744f659830/oauth2/token'
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    payload = 'grant_type=client_credentials&client_id=a86005a7-2865-4db4-8c0f-305247a0544e&client_secret=z0BYa3~7~qjY~Qfg7Q2.1_U~D3Hgb0vu~z&resource=https%3A%2F%2Fstorage.azure.com%2F'
+    r = requests.post(endpoint, headers=headers, data=payload)
+    response = r.json()
+    print("Obtaining AAD bearer token...")
+    bearertoken = response["access_token"]
+    #print(bearertoken)
+    print("Bearer token obtained :) ")
+    return bearertoken
+
+
+getPolicyChanges()
+
+
 
