@@ -10,6 +10,7 @@ import sqlalchemy
 import azure.functions as func
 import requests,uuid
 from requests.auth import HTTPBasicAuth
+from time import perf_counter 
 
 def main(mytimer: func.TimerRequest) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(
@@ -128,41 +129,34 @@ def getPolicyChanges():
 
 
 def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
-    basestorageuri = 'https://baselake.dfs.core.windows.net/base1'
+    basestorageuri = 'https://baselake.dfs.core.windows.net/base'
     spnaccsuffix = ''
     #print(spn + '-' + adlpath)
-    #https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
+    # Read documentation here -> https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
     #Setup the endpoint
     puuid = str(uuid.uuid4())
     #print('Log analytics UUID'+ puuid)
     headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid}
-    request_path = basestorageuri+adlpath+"?mode=modify&action=setAccessControl"
-    print(str(headers))
-    print("directpath: " + request_path)
+    request_path = basestorageuri+adlpath+"?action=setAccessControlRecursive&mode=modify"
+    print("Setting " + permissions + " ACLs for " + spntype + " " + spn + " on " +adlpath + "...")
+    t1_start = perf_counter() 
     r = requests.patch(request_path, headers=headers)
-    print(r.status_code)
-
-    #puuid = str(uuid.uuid4())
-    #print('Log analytics UUID'+ puuid)
-    #headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': 'user:'+spn+'@'+spnaccsuffix + ':r-x,default:user:'+spn+'@'+spnaccsuffix + ':r-x','x-ms-client-request-id': '%s' % puuid}
-    request_path = request_path + "Recursive"
-
-    print("recursive: " + request_path)
-    r = requests.patch(request_path, headers=headers)
-    print(r.headers)  
+    response = r.json()
+    t1_stop = perf_counter()
+    print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
 
 def getSPID(aadtoken, spn, spntype):
     if spntype == 'users': odatafilterfield = "userPrincipalName"
     else: odatafilterfield = "displayName"
+    print("Tenant look up for " + spntype + ": " + spn )
     headers ={'Content-Type': 'application/json','Authorization': 'Bearer %s' % aadtoken}
     request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startswith("+odatafilterfield+",'"+spn.replace('#','%23')+"')"
     #https://graph.microsoft.com/v1.0/users?$filter=startswith(userPrincipalName,'nihurt@microsoft.com')
-    print(aadtoken)
-    print(request_str)
+    #print(aadtoken)
+    #print(request_str)
     r = requests.get(request_str, headers=headers)
     response = r.json()
-    print("Searching for SPN ID")
-    print(response)
+    print("Found OID " + response["value"][0]["id"])
     return response["value"][0]["id"]
     
 
@@ -172,11 +166,11 @@ def getBearerToken(resourcetype):
     payload = 'grant_type=client_credentials&client_id=a86005a7-2865-4db4-8c0f-305247a0544e&client_secret=z0BYa3~7~qjY~Qfg7Q2.1_U~D3Hgb0vu~z&resource=https%3A%2F%2F'+resourcetype+'%2F'
     r = requests.post(endpoint, headers=headers, data=payload)
     response = r.json()
-    print("Obtaining AAD bearer token...")
+    print("Obtaining AAD bearer token for resource "+ resourcetype + "...")
     #print(response)
     bearertoken = response["access_token"]
     #print(bearertoken)
-    print("Bearer token obtained :) ")
+    print("Bearer token obtained.\n")
     return bearertoken
 
 
