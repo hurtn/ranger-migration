@@ -15,7 +15,8 @@ There are two python applications in this repo which:
 ![image](https://user-images.githubusercontent.com/5063077/118631114-185c2900-b7c7-11eb-9dda-c92fcef405a3.png)
 
 ### Future enhancements
-
+- Cater for multiple ranger sources (determine identifiers for unique and context awareness / potentially priotisation)
+- Cater for user/groups exceptions list
 - Implementation of control table and process run reporting
 - Investigation into SQL DB rather SQL MI compatibility
 - Improve scalability (if required):
