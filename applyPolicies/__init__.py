@@ -48,19 +48,6 @@ def getPolicyChanges():
                 print(row[1])
                 start_lsn  = row[0]
                 end_lsn =  row[1]
-#            else:
- #               get_ct_info = "select sys.fn_cdc_get_min_lsn('dbo_ranger_policies') min_lsn, sys.fn_cdc_get_max_lsn() max_lsn from " + dbname + "." + dbschema + ".dummy"
- #               print(get_ct_info)
- #               print("1")
- #               cursor.execute(get_ct_info)
- #               print("2)")
- #               row = cursor.fetchone()
- #               if row:
- #                   print('no previous lsn ' +row[0])
- #                   start_lsn  = row[0]
- #                   end_lsn =  row[1]
- #               else:
- #                    raise Exception("Could not obtain LSN values. Please ensure CDC is enabled on the table")                                  
                
             changessql = "DECLARE  @from_lsn binary(10), @to_lsn binary(10); " 
             if start_lsn is not None:
@@ -74,14 +61,16 @@ def getPolicyChanges():
             select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status] 
             from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all');"""
 
-            print(changessql)
+            #print(changessql)
 
             changesdf= pandas.io.sql.read_sql(changessql, cnxn)
             #print(changesdf)
 
             # filter by new policies entries
             insertdf = changesdf[(changesdf['__$operation']==2)]
+            print("\nChanged policy rows to process:")
             print(insertdf)
+            print("\n")
             if not insertdf.empty:
                 #there are changes to process. first obtain an AAD token
                 storagetoken = getBearerToken("storage.azure.com")
@@ -137,13 +126,34 @@ def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     puuid = str(uuid.uuid4())
     #print('Log analytics UUID'+ puuid)
     headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid}
+    #headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': spntype+':'+spn+spnaccsuffix +',default:'+spntype+':'+spn+spnaccsuffix ,'x-ms-client-request-id': '%s' % puuid}
     request_path = basestorageuri+adlpath+"?action=setAccessControlRecursive&mode=modify"
     print("Setting " + permissions + " ACLs for " + spntype + " " + spn + " on " +adlpath + "...")
     t1_start = perf_counter() 
     r = requests.patch(request_path, headers=headers)
     response = r.json()
     t1_stop = perf_counter()
+    #print(r.text)
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+
+def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
+    basestorageuri = 'https://baselake.dfs.core.windows.net/base'
+    spnaccsuffix = ''
+    #print(spn + '-' + adlpath)
+    # Read documentation here -> https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
+    #Setup the endpoint
+    puuid = str(uuid.uuid4())
+    #print('Log analytics UUID'+ puuid)
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': spntype+':'+spn+spnaccsuffix +',default:'+spntype+':'+spn+spnaccsuffix ,'x-ms-client-request-id': '%s' % puuid}
+    request_path = basestorageuri+adlpath+"?action=setAccessControlRecursive&mode=remove"
+    print("Removing " + permissions + " ACLs for " + spntype + " " + spn + " on " +adlpath + "...")
+    t1_start = perf_counter() 
+    r = requests.patch(request_path, headers=headers)
+    response = r.json()
+    t1_stop = perf_counter()
+    #print(r.text)
+    print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+
 
 def getSPID(aadtoken, spn, spntype):
     if spntype == 'users': odatafilterfield = "userPrincipalName"
