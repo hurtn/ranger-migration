@@ -4,6 +4,7 @@
  @capture_instance = 'all';
 
  TRUNCATE TABLE DBO.RANGER_POLICIES;
+ TRUNCATE TABLE DBO.POLICY_CTL;
 
  EXEC sys.sp_cdc_enable_table
  @source_schema = 'dbo',

@@ -1,3 +1,4 @@
 ﻿ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
-3197,a hdfs,path=[/base1/nyctaxidata],hr1,nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
-3198,a hdfs,path=[/base1/nyctaxidata],hr2,,"read ,,execute",hdfs,Enabled
+3197,a hdfs,path=[/base1/nyctaxidata],"hr1,hr3",nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
+3198,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/green]","hr2,hr3,hr1",,"read ,,execute",hdfs,Enabled
+3199,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/green]","hr2,hr3",,"read ,,execute",hdfs,Enabled

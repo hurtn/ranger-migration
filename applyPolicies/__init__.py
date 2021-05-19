@@ -39,38 +39,57 @@ def getPolicyChanges():
 
             cnxn = pyodbc.connect(connxstr)
             cursor = cnxn.cursor()
-            get_ct_info = "select sys.fn_cdc_increment_lsn(end_lsn) min_lsn,sys.fn_cdc_get_max_lsn() max_lsn from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl);"
-            print(get_ct_info)
+            now =  datetime.datetime.utcnow()
+            formatted_date = now.strftime('%Y-%m-%d %H:%M:%S')
+            get_ct_info = "select lsn_checkpoint, sys.fn_cdc_map_time_to_lsn('smallest greater than',lsn_checkpoint) from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl);"
+            #print(get_ct_info)
+            print("Getting control table information...")
             cursor.execute(get_ct_info)
             row = cursor.fetchone()
-            start_lsn =None
+            lsn_checkpoint=None
+            policy_rows_changed=2
             if row:
-                print(row[1])
-                start_lsn  = row[0]
-                end_lsn =  row[1]
+                print("Last checkpoint was at "+str(row[0]))
+                lsn_checkpoint  = row[0]
+                next_lsn = row[1]
+            else: print("No control information, obtaining all changes...")
+
                
             changessql = "DECLARE  @from_lsn binary(10), @to_lsn binary(10); " 
-            if start_lsn is not None:
-              changessql = changessql + """SET @from_lsn =""" + start_lsn + """
-                                        SET @to_lsn = """ +  end_lsn
+            if lsn_checkpoint is not None:
+              changessql = changessql + """SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','""" + str(lsn_checkpoint) + """')
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn() """
 
             else: 
                    changessql = changessql + """SET @from_lsn =sys.fn_cdc_get_min_lsn('dbo_ranger_policies');
                                                SET @to_lsn = sys.fn_cdc_get_max_lsn(); """
+                   #cursor.execute("select sys.fn_cdc_get_min_lsn('dbo_ranger_policies'), sys.fn_cdc_get_max_lsn()")
+                   #row = cursor.fetchone()
+                   #start_lsn = row[0]
+                   #end_lsn = row[1]
+                   #cursor.cancel() 
             changessql = changessql + """            
             select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status] 
-            from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all');"""
+            from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all update old') 
+            order by id,__$seqval,__$operation;"""
 
             #print(changessql)
-
-            changesdf= pandas.io.sql.read_sql(changessql, cnxn)
+            if lsn_checkpoint is not None and next_lsn is not None:
+              changesdf= pandas.io.sql.read_sql(changessql, cnxn)
+              if changesdf is None:
+                print("No changes found. Exiting...")
+                exit()
+            else:
+                print("No changes found. Exiting...")
+                exit()
             #print(changesdf)
 
             # filter by new policies entries
             insertdf = changesdf[(changesdf['__$operation']==2)]
-            print("\nChanged policy rows to process:")
+            print("\nNew policy rows to apply:")
             print(insertdf)
             print("\n")
+            acl_change_counter = 0
             if not insertdf.empty:
                 #there are changes to process. first obtain an AAD token
                 storagetoken = getBearerToken("storage.azure.com")
@@ -92,7 +111,8 @@ def getPolicyChanges():
                             for hdfsentry in hdfsentries:
                                 #print("path: "+hdfsentry.strip())
                                 spnid = getSPID(graphtoken,userentry.strip(),'users')
-                                setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
+                                acl_change_counter += setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
+                                #removeADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
                     if row.Groups is not None and len(row.Groups)>0:
                         groupentries = row.Groups.split(",")
                         for groupentry in groupentries:
@@ -101,8 +121,118 @@ def getPolicyChanges():
                             for hdfsentry in hdfsentries:
                                 #print("path: "+hdfsentry.strip())
                                 spnid = getSPID(graphtoken,groupentry.strip(),'groups')
-                                setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'group')
+                                acl_change_counter += setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'group')
+                                #removeADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
 
+
+            ## updates
+            updatesdf = changesdf[(changesdf['__$operation']==3) |(changesdf['__$operation']==4)]
+            print("\nUpdated policy rows to process:")
+            print(updatesdf)
+            print("\n")
+            rowid = 0
+            for index, row in updatesdf.iterrows():
+              if rowid != row['id']:
+                #reset the arrays per unique policy ID
+                groupsafter = []
+                groupsbefore = []
+                usersbefore = []
+                usersafter = []
+                resourcesbefore = []
+                resourcesafter = []
+                accessesbefore = []
+                accessesafter = []
+                statusbefore = ''
+                statusafter = ''
+                print("policy id "+str(row['id']))
+                rowid = row['id']
+                # fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
+                # and after snapshot,even if multiple changes took place
+                firstandlastforid = updatesdf[(updatesdf['id']==rowid)].iloc[[0, -1]]
+                # don't be confused by the for loops below - 
+                # it must seem a really odd way to get the row from the pandas series but I couldn't find another elegant way yet. 
+                # essentially this is just fetching the one row from each iterrows to store the before and after value from the iloc 0,-1 filter above
+                for index,row in firstandlastforid.iloc[[0]].iterrows():
+                  if row.Groups: groupsbefore = row.Groups.split(",")
+                  resourcesbefore = row.Resources.strip("path=[").strip("]").split(",")
+                  if row.Users: usersbefore = row.Users.split(",")
+                  accessesbefore = row.Accesses.split(",")
+                  statusbefore = row.Status
+                for index,row in firstandlastforid.iloc[[1]].iterrows():
+                  if row.Groups: groupsafter = row.Groups.split(",")
+                  resourcesafter = row.Resources.strip("path=[").strip("]").split(",")
+                  if row.Users: usersafter = row.Users.split(",")
+                  accessesafter = row.Accesses.split(",")
+                  statusafter = row.Status
+
+                def entitiesToAdd(beforelist, afterlist):
+                    return (list(set(afterlist) - set(beforelist)))
+
+                def entitiesToRemove(beforelist, afterlist):
+                    return (list(set(beforelist) - set(afterlist)))                    
+
+                # determine group changes
+                addgroups = entitiesToAdd(groupsbefore,groupsafter)
+                if addgroups: 
+                    print("add the following groups")
+                    for grouptoadd in addgroups:
+                        print(grouptoadd)
+
+                removegroups = entitiesToRemove(groupsbefore,groupsafter)    
+                if removegroups:
+                    print("remove the following groups")
+                    for grouptoremove in removegroups:
+                        print(grouptoremove)
+                
+                # determine user changes
+                addusers = entitiesToAdd(usersbefore,usersafter)
+                if addusers:
+                    print("add the following users")
+                    for usertoadd in addusers:
+                        print(usertoadd)
+
+                removeusers = entitiesToRemove(usersbefore,usersafter)    
+                if removeusers:
+                    print("remove the following users")
+                    for usertoremove in removeusers:
+                        print(usertoremove)
+
+                # determine access changes
+                addaccesses = entitiesToAdd(accessesbefore,accessesafter)
+                if addaccesses:
+                    print("add the following accesses")
+                    for accesstoadd in addaccesses:
+                        print(accesstoadd)
+
+                removeaccesses = entitiesToRemove(accessesbefore,accessesafter)    
+                if removeaccesses:
+                    print("remove the following accesses")
+                    for accesstoremove in removeaccesses:
+                        print(accesstoremove)
+
+                if statusbefore != statusafter:
+                    if statusafter == 'Enabled': print('Policy now enabled')    
+                    if statusafter == 'Disabled': print('Policy now disabled')    
+
+                 # determine access changes   
+                addresources = entitiesToAdd(resourcesbefore,resourcesafter)
+                if addresources:
+                    print("add the following resources")
+                    for resourcetoadd in addresources:
+                        print(resourcetoadd)
+                removeresources = entitiesToRemove(resourcesbefore,resourcesafter)    
+                if removeresources:
+                    print("remove the following resources")
+                    for resourcetoremove in removeresources:
+                        print(resourcetoremove)
+
+
+            acl_change_counter = 0
+
+            # save checkpoint in control table
+            set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + formatted_date + "','"+ formatted_date + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
+            #print(set_ct_info)
+            cursor.execute(set_ct_info)
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -135,6 +265,7 @@ def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     t1_stop = perf_counter()
     #print(r.text)
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+    return(response["filesSuccessful"])
 
 def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     basestorageuri = 'https://baselake.dfs.core.windows.net/base'

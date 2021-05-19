@@ -70,7 +70,7 @@ def storePolicies():
             cursor.execute(updatesql)
             cnxn.commit()
 
-
+            rowcount = -1
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
             USING (select id,Name,Resources,Groups,Users,Accesses,[Service Type],Status,Checksum from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
             ) AS Source
