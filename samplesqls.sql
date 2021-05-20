@@ -81,7 +81,7 @@ create table ranger_policies (
 ,
 
 
-select *  from ranger_policies;
+select *  from dbo.ranger_policies;
 
 update pi set checksum =  HASHBYTES('SHA1',  (select pi.id,pi.Name,pi.Resources,pi.Groups,pi.Users,pi.Accesses,pi.[Service Type],pi.Status for xml raw)) 
 FROM
@@ -128,7 +128,7 @@ DECLARE  @from_lsn binary(10), @to_lsn binary(10);  SET @from_lsn =sys.fn_cdc_ge
 DECLARE  @from_lsn binary(10), @to_lsn binary(10);  
 SET @from_lsn =sys.fn_cdc_get_min_lsn('dbo_ranger_policies');  
 SET @to_lsn = sys.fn_cdc_map_time_to_lsn('largest less than or equal',  GETDATE());
-SELECT * FROM cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old');
+SELECT * FROM cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')  order by id,__$seqval,__$operation;
 
             select [id],[Name],[Resources],[Groups],[Users],[Accesses] from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all');
 
@@ -162,3 +162,10 @@ DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map
                                         SET @to_lsn = sys.fn_cdc_get_max_lsn()
             select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
             from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old');
+
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-19 20:48:29')
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn()
+            select *
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old') order by __$seqval,id,__$operation;
+
+            select sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-19 23:36:13')

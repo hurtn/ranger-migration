@@ -1,3 +1,4 @@
+import os
 import datetime
 import logging
 import urllib
@@ -18,23 +19,28 @@ def main(mytimer: func.TimerRequest) -> None:
         logging.info('The timer is past due!')
 
     logging.info('Python timer trigger function ran at %s', utc_timestamp)
-    #storePolicy()
+    storePolicies()
    
 
 def storePolicies():
+    connxstr=os.environ["DatabaseConnxStr"]
+    #print("Connection string: " + connxstr)
+    logging.debug("Connection string: " + connxstr)
+    cnxn = pyodbc.connect(connxstr)
+    dbname = 'policystore'
+
     try:
-                # configure database params
-            connxstr="Driver={ODBC Driver 13 for SQL Server};Server=tcp:cenpolicystor.public.ab33566069d1.database.windows.net,3342;Uid=saadmin;Pwd=Obv10us123456789;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
-            dbname = "policystore"
+            # configure database params
             dbschema = "dbo"
+
             stagingtablenm = "ranger_policies_staging"
             targettablenm = "ranger_policies"
             batchsize = 200
-            params = urllib.parse.quote_plus(connxstr+'Database='+dbname +';')
+            params = urllib.parse.quote_plus(connxstr)
             collist = ['ID','Name','Resources','Groups','Users','Accesses','Service Type','Status']
             #ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
 
-            cnxn = pyodbc.connect(connxstr)
+            
             cursor = cnxn.cursor()
             truncsql = "TRUNCATE table " + dbname + "." + dbschema + "." + stagingtablenm  
             cursor.execute(truncsql)
@@ -81,6 +87,7 @@ def storePolicies():
                         , Target.[Users] = Source.[Users]
                         , Target.[Accesses] = Source.[Accesses]
                         , Target.[Status] = Source.[Status]
+                        , Target.[checksum] = Source.[checksum]
             WHEN NOT MATCHED BY TARGET THEN
                 INSERT ([id],[Name], [Resources], [Groups],[Users],[Accesses],[Service Type],[Status],[Checksum])
                 VALUES (
@@ -108,9 +115,12 @@ def storePolicies():
             cnxn.commit()
             print('Successfully processed file!')
     finally:
-            cnxn.autocommit = True
+            #cnxn.autocommit = True
+            print('Terminated')
 #aadbt = getBearerToken()
 #fetchRangerPolicyByID(44)
+
 storePolicies()
 #setADLSPermissions(aadbt,'')
+
 

@@ -1,4 +1,7 @@
-﻿ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
-3197,a hdfs,path=[/base1/nyctaxidata],"hr1,hr3",nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
-3198,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/green]","hr2,hr3,hr1",,"read ,,execute",hdfs,Enabled
-3199,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/green]","hr2,hr3",,"read ,,execute",hdfs,Enabled
+﻿RepoPrefix,ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
+A,3197,a hdfs,path=[/base1/nyctaxidata],"hr1,hr3",nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
+B,3198,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/green]","hr2,hr3,hr1",,"read ,,execute",hdfs,Enabled
+C,3199,a hdfs,"path=[/base1/nyctaxidata,/base1/nyctaxidata/yellow]","hr2,hr3",,"read ,,execute",hdfs,Enabled
+D,4000,a hdfs,path=[/base1/nyctaxidata/green],hr1,nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
+E,4001,a hdfs,path=[/base1/nyctaxidata/yellow],"hr2,hr3",nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read ,write ,execute",hdfs,Enabled
+E,4002,a hdfs,path=[/base1/nyctaxidata/yellow],"hr2, hr3",nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#,"read , ,execute",hdfs,Enabled

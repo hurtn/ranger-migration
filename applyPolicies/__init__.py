@@ -1,3 +1,4 @@
+import os
 import datetime
 import logging
 import urllib
@@ -25,11 +26,10 @@ def main(mytimer: func.TimerRequest) -> None:
 
 def getPolicyChanges():
     try:
-                # configure database params
-            dbname = "policystore"
+            # configure database params
             dbschema = "dbo"
-            connxstr="Driver={ODBC Driver 13 for SQL Server};Server=tcp:cenpolicystor.public.ab33566069d1.database.windows.net,3342;Database="+dbname+";Uid=saadmin;Pwd=Obv10us123456789;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
-
+            connxstr=os.environ["DatabaseConnxStr"]
+            dbname = 'policystore'
             stagingtablenm = "ranger_policies_staging"
             targettablenm = "ranger_policies"
             batchsize = 200
@@ -78,6 +78,7 @@ def getPolicyChanges():
               changesdf= pandas.io.sql.read_sql(changessql, cnxn)
               if changesdf is None:
                 print("No changes found. Exiting...")
+                ## TODO This needs to be reworked because we shuold still update the checkpoint if no rows were found
                 exit()
             else:
                 print("No changes found. Exiting...")
@@ -86,11 +87,11 @@ def getPolicyChanges():
 
             # filter by new policies entries
             insertdf = changesdf[(changesdf['__$operation']==2)]
-            print("\nNew policy rows to apply:")
-            print(insertdf)
-            print("\n")
             acl_change_counter = 0
             if not insertdf.empty:
+                print("\nNew policy rows to apply:")
+                print(insertdf)
+                print("\n")
                 #there are changes to process. first obtain an AAD token
                 storagetoken = getBearerToken("storage.azure.com")
                 graphtoken = getBearerToken("graph.microsoft.com")
@@ -123,14 +124,16 @@ def getPolicyChanges():
                                 spnid = getSPID(graphtoken,groupentry.strip(),'groups')
                                 acl_change_counter += setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'group')
                                 #removeADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
-
+            else:
+                print("No new policies detected. Determining other changes...")
 
             ## updates
             updatesdf = changesdf[(changesdf['__$operation']==3) |(changesdf['__$operation']==4)]
-            print("\nUpdated policy rows to process:")
-            print(updatesdf)
-            print("\n")
+            #print("\nUpdated policy rows to process:")
+            #print(updatesdf)
+            #print("\n")
             rowid = 0
+
             for index, row in updatesdf.iterrows():
               if rowid != row['id']:
                 #reset the arrays per unique policy ID
@@ -144,7 +147,6 @@ def getPolicyChanges():
                 accessesafter = []
                 statusbefore = ''
                 statusafter = ''
-                print("policy id "+str(row['id']))
                 rowid = row['id']
                 # fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
                 # and after snapshot,even if multiple changes took place
@@ -153,6 +155,7 @@ def getPolicyChanges():
                 # it must seem a really odd way to get the row from the pandas series but I couldn't find another elegant way yet. 
                 # essentially this is just fetching the one row from each iterrows to store the before and after value from the iloc 0,-1 filter above
                 for index,row in firstandlastforid.iloc[[0]].iterrows():
+                  print("Found changes for policy id "+str(row['id']))
                   if row.Groups: groupsbefore = row.Groups.split(",")
                   resourcesbefore = row.Resources.strip("path=[").strip("]").split(",")
                   if row.Users: usersbefore = row.Users.split(",")
@@ -171,60 +174,64 @@ def getPolicyChanges():
                 def entitiesToRemove(beforelist, afterlist):
                     return (list(set(beforelist) - set(afterlist)))                    
 
+                # determine whether policy status changed
+                if statusbefore != statusafter:
+                    if statusafter == 'Enabled': print('Policy now enabled')    
+                    if statusafter == 'Disabled': print('Policy now disabled')  
+
+
+                 # determine resources (path) changes   
+                addresources = entitiesToAdd(resourcesbefore,resourcesafter)
+                removeresources = entitiesToRemove(resourcesbefore,resourcesafter)    
+                if removeresources:
+                    print("remove all previous permissions from the following resources")
+                    for resourcetoremove in removeresources:
+                        print(resourcetoremove)
+
+                if addresources:
+                    print("add the new permissions to the following resources")
+                    for resourcetoadd in addresources:
+                        print(resourcetoadd)
+
+
                 # determine group changes
                 addgroups = entitiesToAdd(groupsbefore,groupsafter)
-                if addgroups: 
-                    print("add the following groups")
-                    for grouptoadd in addgroups:
-                        print(grouptoadd)
-
                 removegroups = entitiesToRemove(groupsbefore,groupsafter)    
                 if removegroups:
                     print("remove the following groups")
                     for grouptoremove in removegroups:
                         print(grouptoremove)
-                
+                if addgroups: 
+                    print("add the following groups")
+                    for grouptoadd in addgroups:
+                        print(grouptoadd)
+
+              
                 # determine user changes
                 addusers = entitiesToAdd(usersbefore,usersafter)
-                if addusers:
-                    print("add the following users")
-                    for usertoadd in addusers:
-                        print(usertoadd)
-
                 removeusers = entitiesToRemove(usersbefore,usersafter)    
                 if removeusers:
                     print("remove the following users")
                     for usertoremove in removeusers:
                         print(usertoremove)
+                if addusers:
+                    print("add the following users")
+                    for usertoadd in addusers:
+                        print(usertoadd)
+
 
                 # determine access changes
                 addaccesses = entitiesToAdd(accessesbefore,accessesafter)
-                if addaccesses:
-                    print("add the following accesses")
-                    for accesstoadd in addaccesses:
-                        print(accesstoadd)
-
                 removeaccesses = entitiesToRemove(accessesbefore,accessesafter)    
                 if removeaccesses:
                     print("remove the following accesses")
                     for accesstoremove in removeaccesses:
                         print(accesstoremove)
+                if addaccesses:
+                    print("add the following accesses")
+                    for accesstoadd in addaccesses:
+                        print(accesstoadd)
 
-                if statusbefore != statusafter:
-                    if statusafter == 'Enabled': print('Policy now enabled')    
-                    if statusafter == 'Disabled': print('Policy now disabled')    
-
-                 # determine access changes   
-                addresources = entitiesToAdd(resourcesbefore,resourcesafter)
-                if addresources:
-                    print("add the following resources")
-                    for resourcetoadd in addresources:
-                        print(resourcetoadd)
-                removeresources = entitiesToRemove(resourcesbefore,resourcesafter)    
-                if removeresources:
-                    print("remove the following resources")
-                    for resourcetoremove in removeresources:
-                        print(resourcetoremove)
 
 
             acl_change_counter = 0
