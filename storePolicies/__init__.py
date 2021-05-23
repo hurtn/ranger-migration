@@ -100,7 +100,9 @@ def storePolicies():
                 , Source.[Service Type]
                 , Source.[Status]
                 , Source.[Checksum]
-                ); """
+                )
+            WHEN NOT MATCHED BY SOURCE
+                THEN DELETE; """
             #print(mergesql)
             rowcount = cursor.execute(mergesql).rowcount
             cnxn.commit()
@@ -117,10 +119,7 @@ def storePolicies():
     finally:
             cnxn.autocommit = True
 
-#aadbt = getBearerToken()
-#fetchRangerPolicyByID(44)
 
 storePolicies()
-#setADLSPermissions(aadbt,'')
 
 

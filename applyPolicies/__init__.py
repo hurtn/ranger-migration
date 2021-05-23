@@ -200,7 +200,7 @@ def getPolicyChanges():
             ################################################# 
 
 
-                print("\Deleted policy rows to apply:")
+                print("\nDeleted policy rows to apply:")
                 print(deleteddf)
                 print("\n")
 
@@ -217,7 +217,7 @@ def getPolicyChanges():
                         # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                         hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
                         for hdfsentry in hdfsentries:
-                            print('calling bulk set')
+                            print('calling bulk remove...')
                             acl_change_counter += removeADLSBulkPermissions(storagetoken, spids, hdfsentry.strip())
 
 
@@ -311,22 +311,24 @@ def getPolicyChanges():
                     return sorted(list_1) == sorted(list_2)
                 
                 # now determine the differences between users and groups before and after
-
                 #print("Groups before = " + str(groupsbefore) + " Groups after " + str(groupsafter)) 
                 addgroups = entitiesToAdd(groupsbefore,groupsafter)
                 removegroups = entitiesToRemove(groupsbefore,groupsafter)    
                 addusers = entitiesToAdd(usersbefore,usersafter)
                 removeusers = entitiesToRemove(usersbefore,usersafter)    
 
-                if check_if_equal(addgroups, removegroups):
-                    print('Groups in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
-                    addgroups = None
-                    removegroups = None
+                #check if they are really different even if the order was simply changed
+                if addgroups or removegroups:
+                    if check_if_equal(addgroups, removegroups):
+                        print('Groups in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
+                        addgroups = None
+                        removegroups = None
 
-                if check_if_equal(addusers, removeusers):
-                    print('Users in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
-                    addusers = None
-                    removeusers = None
+                if addusers or removeusers:
+                    if check_if_equal(addusers, removeusers):
+                        print('Users in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
+                        addusers = None
+                        removeusers = None
 
                 # determine if any permissions changed
                 # note we do not actually need to calculate the differences in permissions because they must be done as a delete of ACLs using the before image
