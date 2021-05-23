@@ -14,6 +14,10 @@ There are two python applications in this repo which:
 
 ![image](https://user-images.githubusercontent.com/5063077/118631114-185c2900-b7c7-11eb-9dda-c92fcef405a3.png)
 
+### Process flow for modified policies
+
+![image](https://user-images.githubusercontent.com/5063077/119273763-4c3eb080-bc04-11eb-91ed-993f313a06c5.png)
+
 ## Setup of local environment
 - Create a service principal
 - Store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
