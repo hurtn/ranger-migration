@@ -417,19 +417,19 @@ def getPolicyChanges():
             print(set_ct_info)
             cursor.execute(set_ct_info)
 
-    #except pyodbc.DatabaseError as err:
-    #        cnxn.commit()
-    #        sqlstate = err.args[1]
-    #        sqlstate = sqlstate.split(".")
-    #        print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
-    #else:
-    #        cnxn.commit()
-    #        print('Done')
+    except pyodbc.DatabaseError as err:
+            cnxn.commit()
+            sqlstate = err.args[1]
+            sqlstate = sqlstate.split(".")
+            print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
+    else:
+            cnxn.commit()
+            print('Done')
     finally:
             cnxn.autocommit = True
 
 
-
+## DEPRECATED - see newer method with bulk override
 def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     basestorageuri = 'https://baselake.dfs.core.windows.net/base'
     spnaccsuffix = ''
@@ -448,7 +448,7 @@ def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     t1_stop = perf_counter()
     #print(r.text)
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
-    return(response["filesSuccessful"])
+    return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
 
 # a variation of the function above which access a dictionary object of users and groups so that we can set the ACLs in bulk with a comma seprated list of ACEs (access control entries)
 def setADLSBulkPermissions(aadtoken, spids, adlpath, permissions):
@@ -477,7 +477,7 @@ def setADLSBulkPermissions(aadtoken, spids, adlpath, permissions):
       print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
     else:
       print("Error: " + str(r.text))
-    return(response["filesSuccessful"])
+    return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
 
     #aces = spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid
 
@@ -510,9 +510,10 @@ def removeADLSBulkPermissions(aadtoken, spids, adlpath):
       print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
     else:
       print("Error: " + str(r.text))
-    return(response["filesSuccessful"])
+    return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
     #print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
 
+## DEPRECATED - see newer method with bulk override
 def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     basestorageuri = 'https://baselake.dfs.core.windows.net/base'
     spnaccsuffix = ''
@@ -530,7 +531,7 @@ def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     t1_stop = perf_counter()
     #print(r.text)
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
-
+    return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
 
 def getSPID(aadtoken, spname, spntype):
     # Graph docs - Odata filter: https://docs.microsoft.com/en-us/graph/query-parameters#filter-parameter
