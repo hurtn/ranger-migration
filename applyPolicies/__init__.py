@@ -34,23 +34,43 @@ def getPolicyChanges():
             else: permstr+='-'
         return permstr
 
+    def getSPID(aadtoken, spname, spntype):
+        # Graph docs - Odata filter: https://docs.microsoft.com/en-us/graph/query-parameters#filter-parameter
+        if spntype == 'users': odatafilterfield = "userPrincipalName"
+        else: odatafilterfield = "displayName"
+        spname = spname.strip().strip("'") #cleanup
+        print("AAD Directory look up for " + spntype + ": " + spname)
+        headers ={'Content-Type': 'application/json','Authorization': 'Bearer %s' % aadtoken}
+        request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startsWith("+odatafilterfield+",'"+spname.strip().replace('#','%23')+"')"
+        #https://graph.microsoft.com/v1.0/users?$filter=startswith(userPrincipalName,'nihurt@microsoft.com')
+        #print(aadtoken)
+        print(request_str)
+        r = requests.get(request_str, headers=headers)
+        if r.status_code==200:
+            response = r.json()
+            print("Found OID " + response["value"][0]["id"])
+            return response["value"][0]["id"]
+        else:
+            print("Warning: Could not find user ID!!!")
+            # at this point should we aboort the process or just log the failure?? TBD by client
+            return None
 
     def getSPIDs(userslist, groupslist):
         spids = defaultdict(list) # a dictionary object of all the security principal (sp) IDs to be set in this ACL
 
         # iterate through the comma separate list of groups and set the dictionary object
         if userslist is not None and len(userslist)>0:
-            userentries = userslist.split(",")
+            userentries = str(userslist).split(",")
             for userentry in userentries:
                 #print("user: "+userentry.strip("['").strip("']").strip(' '))
-                spnid = getSPID(graphtoken,userentry.strip("['").strip("']").strip(' '),'users')
+                spnid = getSPID(graphtoken,userentry.strip("['").strip("']").strip("'").strip(' '),'users')
                 spids['user'].append(spnid)
 
         # iterate through the comma separate list of groups and set the dictionary object
         if groupslist is not None and len(groupslist)>0:
-            groupentries = groupslist.split(",")
+            groupentries = str(groupslist).split(",")
             for groupentry in groupentries:
-                spnid = getSPID(graphtoken,groupentry.strip("['").strip("']").strip(' '),'groups')
+                spnid = getSPID(graphtoken,groupentry.strip("['").strip("']").strip("'").strip(' '),'groups')
                 if spnid is not None:
                   spids['group'].append(spnid)
         return spids
@@ -122,7 +142,7 @@ def getPolicyChanges():
 
               # save checkpoint in control table
               set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
-              print(set_ct_info)
+              #print(set_ct_info)
               cursor.execute(set_ct_info)
               # now terminate the program
               exit()
@@ -251,8 +271,12 @@ def getPolicyChanges():
                   statusbefore = rowbefore.Status
 
                   # determine group and user before images
-                  if rowbefore.Groups: groupsbefore = rowbefore.Groups.split(",")
-                  if rowbefore.Users: usersbefore = rowbefore.Users.split(",")
+                  if rowbefore.Groups: 
+                      groupsbefore = rowbefore.Groups.split(",")
+                      groupsbefore = [groupitem.strip(' ') for groupitem in groupsbefore] # clean up by removing any spaces
+                  if rowbefore.Users: 
+                      usersbefore = rowbefore.Users.split(",")
+                      usersbefore = [useritem.strip(' ') for useritem in usersbefore] # clean up by removing any spaces
 
                 for index,rowafter in firstandlastforid.iloc[[1]].iterrows():
 
@@ -262,10 +286,14 @@ def getPolicyChanges():
                   statusafter = rowafter.Status.strip()
 
                   # determine group and user after images
-                  if rowafter.Groups: groupsafter = rowafter.Groups.split(",")
-                  if rowafter.Users: usersafter = rowafter.Users.split(",")
+                  if rowafter.Groups: 
+                      groupsafter = rowafter.Groups.split(",")
+                      groupsafter = [groupitem.strip(' ') for groupitem in groupsafter] # clean up by removing any spaces
+                  if rowafter.Users: 
+                      usersafter = rowafter.Users.split(",")
+                      usersafter = [useritem.strip(' ') for useritem in usersafter] # clean up by removing any spaces
 
-                # now determine the differences between users and groups before and after
+                
                 # utility functions to determine differences in lists
                 def entitiesToAdd(beforelist, afterlist):
                     return (list(set(afterlist) - set(beforelist)))
@@ -273,11 +301,32 @@ def getPolicyChanges():
                 def entitiesToRemove(beforelist, afterlist):
                     return (list(set(beforelist) - set(afterlist)))                    
 
+                ## determine whether the lists are equal if sorted i.e. the same elements just in different order
+                def check_if_equal(list_1, list_2):
+                    """ Check if both the lists are of same length and if yes then compare
+                    sorted versions of both the list to check if both of them are equal
+                    i.e. contain similar elements with same frequency. """
+                    if len(list_1) != len(list_2):
+                        return False
+                    return sorted(list_1) == sorted(list_2)
+                
+                # now determine the differences between users and groups before and after
 
+                #print("Groups before = " + str(groupsbefore) + " Groups after " + str(groupsafter)) 
                 addgroups = entitiesToAdd(groupsbefore,groupsafter)
                 removegroups = entitiesToRemove(groupsbefore,groupsafter)    
                 addusers = entitiesToAdd(usersbefore,usersafter)
                 removeusers = entitiesToRemove(usersbefore,usersafter)    
+
+                if check_if_equal(addgroups, removegroups):
+                    print('Groups in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
+                    addgroups = None
+                    removegroups = None
+
+                if check_if_equal(addusers, removeusers):
+                    print('Users in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
+                    addusers = None
+                    removeusers = None
 
                 # determine if any permissions changed
                 # note we do not actually need to calculate the differences in permissions because they must be done as a delete of ACLs using the before image
@@ -285,13 +334,13 @@ def getPolicyChanges():
                 addaccesses = entitiesToAdd(accessesbefore,accessesafter)
                 removeaccesses = entitiesToRemove(accessesbefore,accessesafter) 
 
+                permstr = getPermSeq(rowafter.Accesses.split(","))    
 
                 # determine whether policy status changed
                 if statusbefore != statusafter:
                     if statusafter == 'Enabled': # an enabled policy is treated as a new policy
                         print('Policy now enabled, same as a new policy - add ACLS')    
 
-                        permstr = getPermSeq(rowafter.Accesses.split(","))    
                         
                         # obtain a dictionary list of all security principals
                         spids = getSPIDs(rowafter.Users,rowafter.Groups)
@@ -346,12 +395,14 @@ def getPolicyChanges():
 
 
                         if removegroups or removeusers:
-                            print("Remove the following groups")
-                            for grouptoremove in removegroups:
-                                print(grouptoremove)
-                            print("Remove the following users")
-                            for usertoremove in removeusers:
-                                print(usertoremove)
+                            if removegroups:
+                                print("Remove the following groups = "+ str(removegroups))
+                                for grouptoremove in removegroups:
+                                    print(grouptoremove)
+                            if removeusers:
+                                print("Remove the following users")
+                                for usertoremove in removeusers:
+                                    print(usertoremove)
 
                             # get associated IDs for the user/groups to be removed
                             spids = getSPIDs(removeusers,removegroups)
@@ -361,12 +412,14 @@ def getPolicyChanges():
                                 acl_change_counter += removeADLSBulkPermissions(storagetoken, spids,  hdfsentry.strip())
 
                         if addgroups or addusers: 
-                            print("add the following groups")
-                            for grouptoadd in addgroups:
-                                print(grouptoadd)
-                            print("add the following users")
-                            for usertoadd in addusers:
-                                print(usertoadd)
+                            if addgroups:
+                                print("add the following groups = "+ str(addgroups))
+                                for grouptoadd in addgroups:
+                                    print(grouptoadd)
+                            if addusers:    
+                                print("add the following users")
+                                for usertoadd in addusers:
+                                    print(usertoadd)
 
                             spids = getSPIDs(addusers,addgroups)  ## Note: here we could potentially use the rowafter.Users/Groups list (i.e. the current image of groups) instead of the delta/difference
                                 # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
@@ -404,7 +457,7 @@ def getPolicyChanges():
                                 acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
 
                     else:
-                        print("Identified change found in the record set which did not pertain to paths, users, groups, permissions. Change has been ignored")
+                        print("Changes were identified but no action taken. This could be due to: \n- A policy entry was updated but the fields stayed the same, just the order of the entities changed. \n- A change occured that did not pertain to paths, users, groups, permissions. \nThese change have been ignored.")
                 else: 
                     print("No other changes to process.")
 
@@ -414,8 +467,8 @@ def getPolicyChanges():
 
             # save checkpoint in control table
             set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
-            print(set_ct_info)
-            cursor.execute(set_ct_info)
+            #print(set_ct_info)
+            #cursor.execute(set_ct_info)
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -533,26 +586,7 @@ def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
     return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
 
-def getSPID(aadtoken, spname, spntype):
-    # Graph docs - Odata filter: https://docs.microsoft.com/en-us/graph/query-parameters#filter-parameter
-    if spntype == 'users': odatafilterfield = "userPrincipalName"
-    else: odatafilterfield = "displayName"
-    print("Tenant look up for " + spntype + ": " + spname.strip() )
-    headers ={'Content-Type': 'application/json','Authorization': 'Bearer %s' % aadtoken}
-    request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startsWith("+odatafilterfield+",'"+spname.strip().replace('#','%23')+"')"
-    #https://graph.microsoft.com/v1.0/users?$filter=startswith(userPrincipalName,'nihurt@microsoft.com')
-    #print(aadtoken)
-    #print(request_str)
-    r = requests.get(request_str, headers=headers)
-    if r.status_code==200:
-        response = r.json()
-        print("Found OID " + response["value"][0]["id"])
-        return response["value"][0]["id"]
-    else:
-        print("Warning: Could not find user ID!!!")
-        # at this point should we aboort the process or just log the failure?? TBD by client
-        return None
-    
+  
 
 def getBearerToken(resourcetype,spnid,spnsecret):
     endpoint = 'https://login.microsoftonline.com/af26513a-fe59-4005-967d-bd744f659830/oauth2/token'
