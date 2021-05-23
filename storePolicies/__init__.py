@@ -115,8 +115,8 @@ def storePolicies():
             cnxn.commit()
             print('Successfully processed file!')
     finally:
-            #cnxn.autocommit = True
-            print('Terminated')
+            cnxn.autocommit = True
+
 #aadbt = getBearerToken()
 #fetchRangerPolicyByID(44)
 

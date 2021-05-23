@@ -12,6 +12,7 @@ import azure.functions as func
 import requests,uuid
 from requests.auth import HTTPBasicAuth
 from time import perf_counter 
+from collections import defaultdict
 
 def main(mytimer: func.TimerRequest) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(
@@ -25,10 +26,43 @@ def main(mytimer: func.TimerRequest) -> None:
    
 
 def getPolicyChanges():
+    def getPermSeq(perms):
+        for perm in perms:
+            if perm.strip() == 'read': permstr='r'
+            elif perm.strip() == 'write': permstr+='w'
+            elif perm.strip() == 'execute': permstr+='x'
+            else: permstr+='-'
+        return permstr
+
+
+    def getSPIDs(userslist, groupslist):
+        spids = defaultdict(list) # a dictionary object of all the security principal (sp) IDs to be set in this ACL
+
+        # iterate through the comma separate list of groups and set the dictionary object
+        if userslist is not None and len(userslist)>0:
+            userentries = userslist.split(",")
+            for userentry in userentries:
+                #print("user: "+userentry.strip("['").strip("']").strip(' '))
+                spnid = getSPID(graphtoken,userentry.strip("['").strip("']").strip(' '),'users')
+                spids['user'].append(spnid)
+
+        # iterate through the comma separate list of groups and set the dictionary object
+        if groupslist is not None and len(groupslist)>0:
+            groupentries = groupslist.split(",")
+            for groupentry in groupentries:
+                spnid = getSPID(graphtoken,groupentry.strip("['").strip("']").strip(' '),'groups')
+                if spnid is not None:
+                  spids['group'].append(spnid)
+        return spids
+   
+
     try:
             # configure database params
             dbschema = "dbo"
             connxstr=os.environ["DatabaseConnxStr"]
+            spnid= os.environ["SPNID"]
+            spnsecret= os.environ["SPNSecret"]
+
             dbname = 'policystore'
             stagingtablenm = "ranger_policies_staging"
             targettablenm = "ranger_policies"
@@ -40,21 +74,22 @@ def getPolicyChanges():
             cnxn = pyodbc.connect(connxstr)
             cursor = cnxn.cursor()
             now =  datetime.datetime.utcnow()
-            formatted_date = now.strftime('%Y-%m-%d %H:%M:%S')
-            get_ct_info = "select lsn_checkpoint, sys.fn_cdc_map_time_to_lsn('smallest greater than',lsn_checkpoint) from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl);"
+            progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
+            get_ct_info = "select lsn_checkpoint from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl);"
             #print(get_ct_info)
             print("Getting control table information...")
             cursor.execute(get_ct_info)
             row = cursor.fetchone()
             lsn_checkpoint=None
-            policy_rows_changed=2
+            acl_change_counter = 0
+            policy_rows_changed =0
+
             if row:
                 print("Last checkpoint was at "+str(row[0]))
                 lsn_checkpoint  = row[0]
-                next_lsn = row[1]
             else: print("No control information, obtaining all changes...")
 
-               
+            # changessql is the string variable which holds the SQL statements to determine the changes since the last checkpoint   
             changessql = "DECLARE  @from_lsn binary(10), @to_lsn binary(10); " 
             if lsn_checkpoint is not None:
               changessql = changessql + """SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','""" + str(lsn_checkpoint) + """')
@@ -74,68 +109,117 @@ def getPolicyChanges():
             order by id,__$seqval,__$operation;"""
 
             #print(changessql)
-            if lsn_checkpoint is not None and next_lsn is not None:
-              changesdf= pandas.io.sql.read_sql(changessql, cnxn)
-              if changesdf is None:
-                print("No changes found. Exiting...")
-                ## TODO This needs to be reworked because we shuold still update the checkpoint if no rows were found
-                exit()
-            else:
-                print("No changes found. Exiting...")
-                exit()
+            # determine if last checkpoint is available and if so read all the changes into a pandas dataframe
+            changesdf= pandas.io.sql.read_sql(changessql, cnxn)
             #print(changesdf)
+            if changesdf.empty:
 
-            # filter by new policies entries
+              print("No changes found. Exiting...")
+              ## TODO This needs to be reworked because we should still update the checkpoint if no rows were found
+              
+              now =  datetime.datetime.utcnow()
+              progendtime = now.strftime('%Y-%m-%d %H:%M:%S')
+
+              # save checkpoint in control table
+              set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
+              print(set_ct_info)
+              cursor.execute(set_ct_info)
+              # now terminate the program
+              exit()
+            else:
+               uniquepolicyids = changesdf.groupby('id').id.nunique()
+               policy_rows_changed  =[uniquepolicyids.value_counts()][0][1] # get the number of unique policy ids in the changed record set which will be stored on the control table at the end of the routine
+               print("Number of unique policy records changed: " + str(policy_rows_changed))
+               
+
+            # CDC operation 1 = deleted record
+            deleteddf = changesdf[(changesdf['__$operation']==1)]
+            # CDC operation 2 = inserted record, filter by new policies entries
             insertdf = changesdf[(changesdf['__$operation']==2)]
-            acl_change_counter = 0
+            # CDC operation 3 is the before image of the row, operation 4 is the after (current) image.
+            updatesdf = changesdf[(changesdf['__$operation']==3) |(changesdf['__$operation']==4)]
+
+            if not (insertdf.empty and updatesdf.empty and deleteddf.empty): # if there are either inserts or updates then only get tokens
+                storagetoken = getBearerToken("storage.azure.com",spnid,spnsecret)
+                graphtoken = getBearerToken("graph.microsoft.com",spnid,spnsecret)
+
+            #################################################
+            #                                               #
+            #                 New Policies                  #
+            #                                               #
+            ################################################# 
+
             if not insertdf.empty:
+                #there are changes to process. first obtain an AAD tokens
+
                 print("\nNew policy rows to apply:")
                 print(insertdf)
                 print("\n")
-                #there are changes to process. first obtain an AAD token
-                storagetoken = getBearerToken("storage.azure.com")
-                graphtoken = getBearerToken("graph.microsoft.com")
-                for row in insertdf.loc[:, ['Resources','Groups','Users','Accesses']].itertuples():
-                    permstr=''
-                    perms = row.Accesses.split(",")
-                    for perm in perms:
-                        if perm.strip() == 'read': permstr='r'
-                        elif perm.strip() == 'write': permstr+='w'
-                        elif perm.strip() == 'execute': permstr+='x'
-                        else: permstr+='-'
 
-                    if row.Users is not None and len(row.Users)>0:
-                        userentries = row.Users.split(",")
-                        for userentry in userentries:
-                            #print("user: "+userentry.strip())
-                            hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
-                            for hdfsentry in hdfsentries:
-                                #print("path: "+hdfsentry.strip())
-                                spnid = getSPID(graphtoken,userentry.strip(),'users')
-                                acl_change_counter += setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
-                                #removeADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
-                    if row.Groups is not None and len(row.Groups)>0:
-                        groupentries = row.Groups.split(",")
-                        for groupentry in groupentries:
-                            #print("user: "+userentry.strip())
-                            hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
-                            for hdfsentry in hdfsentries:
-                                #print("path: "+hdfsentry.strip())
-                                spnid = getSPID(graphtoken,groupentry.strip(),'groups')
-                                acl_change_counter += setADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'group')
-                                #removeADLSPermissions(storagetoken, spnid, hdfsentry.strip(), permstr,'user')
+                # iterate through the new policy rows
+                for row in insertdf.loc[:, ['Resources','Groups','Users','Accesses','Status']].itertuples():
+                    
+                    if row.Status == 'Enabled': 
+                        # determine the permissions rwx
+                        permstr = getPermSeq(row.Accesses.split(","))    
+                        
+                        # obtain a dictionary list of all security principals
+                        spids = getSPIDs(row.Users,row.Groups)
+
+                        # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                        hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
+                        for hdfsentry in hdfsentries:
+                            print('calling bulk set')
+                            acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
+
+            elif not deleteddf.empty:
+            #################################################
+            #                                               #
+            #               Deleted Policies                #
+            #                                               #
+            ################################################# 
+
+
+                print("\Deleted policy rows to apply:")
+                print(deleteddf)
+                print("\n")
+
+                # iterate through the deleted policy rows
+                for row in deleteddf.loc[:, ['Resources','Groups','Users','Accesses','Status']].itertuples():
+                    
+                    if row.Status == 'Enabled': # only bother deleting ACLs where the policy was in an enabled state
+                        # no need to determine the permissions in a delete/remove ACL scernario
+                        ##permstr = getPermSeq(row.Accesses.split(","))    
+                        
+                        # obtain a dictionary list of all security principals
+                        spids = getSPIDs(row.Users,row.Groups)
+
+                        # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                        hdfsentries = row.Resources.strip("path=[").strip("]").split(",")
+                        for hdfsentry in hdfsentries:
+                            print('calling bulk set')
+                            acl_change_counter += removeADLSBulkPermissions(storagetoken, spids, hdfsentry.strip())
+
+
             else:
-                print("No new policies detected. Determining other changes...")
+                print("No new or deleted policies detected. ")
 
-            ## updates
-            updatesdf = changesdf[(changesdf['__$operation']==3) |(changesdf['__$operation']==4)]
-            #print("\nUpdated policy rows to process:")
-            #print(updatesdf)
-            #print("\n")
-            rowid = 0
+            print("Determining any other changes...")
 
+            #################################################
+            #                                               #
+            #             Modified Policies                 #
+            #                                               #
+            ################################################# 
+
+            rowid = -1 # set this to some policy ID that can never exist so the if statement below finds a new policy ID to process
             for index, row in updatesdf.iterrows():
+              # loop through all the rows but only execute the modified policy logic when we find a new ID to process
               if rowid != row['id']:
+
+                # new policy ID detected, now set the previous value with the new one
+                rowid = row['id']
+
                 #reset the arrays per unique policy ID
                 groupsafter = []
                 groupsbefore = []
@@ -147,108 +231,200 @@ def getPolicyChanges():
                 accessesafter = []
                 statusbefore = ''
                 statusafter = ''
-                rowid = row['id']
-                # fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
-                # and after snapshot,even if multiple changes took place
-                firstandlastforid = updatesdf[(updatesdf['id']==rowid)].iloc[[0, -1]]
-                # don't be confused by the for loops below - 
-                # it must seem a really odd way to get the row from the pandas series but I couldn't find another elegant way yet. 
-                # essentially this is just fetching the one row from each iterrows to store the before and after value from the iloc 0,-1 filter above
-                for index,row in firstandlastforid.iloc[[0]].iterrows():
-                  print("Found changes for policy id "+str(row['id']))
-                  if row.Groups: groupsbefore = row.Groups.split(",")
-                  resourcesbefore = row.Resources.strip("path=[").strip("]").split(",")
-                  if row.Users: usersbefore = row.Users.split(",")
-                  accessesbefore = row.Accesses.split(",")
-                  statusbefore = row.Status
-                for index,row in firstandlastforid.iloc[[1]].iterrows():
-                  if row.Groups: groupsafter = row.Groups.split(",")
-                  resourcesafter = row.Resources.strip("path=[").strip("]").split(",")
-                  if row.Users: usersafter = row.Users.split(",")
-                  accessesafter = row.Accesses.split(",")
-                  statusafter = row.Status
 
+                # Comment: 11b
+                # Fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
+                # and after snapshot, even if multiple changes took place. e.g. if a complex scenario arises in one run such as removal of users/groups, addition of new users/groups, as well as changes to permissions or paths,
+                # this is handled as a recursive deletion of these users/groups from the ACLs from the previous image of the path (in case this was part of the changed fields), and then the new users/groups are recursively added to the latest image of the path
+                firstandlastforid = updatesdf[(updatesdf['id']==rowid)].iloc[[0, -1]]
+
+                # note to reader:
+                # don't be confused by the for loops below - 
+                # it must seem a really odd way to get a single row from the pandas series but I couldn't determine another way at time of development. 
+                # essentially, this is just fetching the one row from each iterrows to store the before and after value from the iloc 0,-1 filter above
+                for index,rowbefore in firstandlastforid.iloc[[0]].iterrows():
+                  print("Found changes for policy id "+str(rowbefore['id']))
+
+                  # determine resources (path), access and status before image
+                  resourcesbefore = rowbefore.Resources.strip("path=[").strip("]").split(",")
+                  accessesbefore = rowbefore.Accesses.split(",")
+                  statusbefore = rowbefore.Status
+
+                  # determine group and user before images
+                  if rowbefore.Groups: groupsbefore = rowbefore.Groups.split(",")
+                  if rowbefore.Users: usersbefore = rowbefore.Users.split(",")
+
+                for index,rowafter in firstandlastforid.iloc[[1]].iterrows():
+
+                  # determine resources (path), access and status after image
+                  resourcesafter = rowafter.Resources.strip("path=[").strip("]").split(",")
+                  accessesafter = rowafter.Accesses.split(",")
+                  statusafter = rowafter.Status.strip()
+
+                  # determine group and user after images
+                  if rowafter.Groups: groupsafter = rowafter.Groups.split(",")
+                  if rowafter.Users: usersafter = rowafter.Users.split(",")
+
+                # now determine the differences between users and groups before and after
+                # utility functions to determine differences in lists
                 def entitiesToAdd(beforelist, afterlist):
                     return (list(set(afterlist) - set(beforelist)))
 
                 def entitiesToRemove(beforelist, afterlist):
                     return (list(set(beforelist) - set(afterlist)))                    
 
-                # determine whether policy status changed
-                if statusbefore != statusafter:
-                    if statusafter == 'Enabled': print('Policy now enabled')    
-                    if statusafter == 'Disabled': print('Policy now disabled')  
 
-
-                 # determine resources (path) changes   
-                addresources = entitiesToAdd(resourcesbefore,resourcesafter)
-                removeresources = entitiesToRemove(resourcesbefore,resourcesafter)    
-                if removeresources:
-                    print("remove all previous permissions from the following resources")
-                    for resourcetoremove in removeresources:
-                        print(resourcetoremove)
-
-                if addresources:
-                    print("add the new permissions to the following resources")
-                    for resourcetoadd in addresources:
-                        print(resourcetoadd)
-
-
-                # determine group changes
                 addgroups = entitiesToAdd(groupsbefore,groupsafter)
                 removegroups = entitiesToRemove(groupsbefore,groupsafter)    
-                if removegroups:
-                    print("remove the following groups")
-                    for grouptoremove in removegroups:
-                        print(grouptoremove)
-                if addgroups: 
-                    print("add the following groups")
-                    for grouptoadd in addgroups:
-                        print(grouptoadd)
-
-              
-                # determine user changes
                 addusers = entitiesToAdd(usersbefore,usersafter)
                 removeusers = entitiesToRemove(usersbefore,usersafter)    
-                if removeusers:
-                    print("remove the following users")
-                    for usertoremove in removeusers:
-                        print(usertoremove)
-                if addusers:
-                    print("add the following users")
-                    for usertoadd in addusers:
-                        print(usertoadd)
 
-
-                # determine access changes
+                # determine if any permissions changed
+                # note we do not actually need to calculate the differences in permissions because they must be done as a delete of ACLs using the before image
+                # and an addition of new ACLs using the after image ie there is no incremental way to remove just a read or a write permission individually AFAIK
                 addaccesses = entitiesToAdd(accessesbefore,accessesafter)
-                removeaccesses = entitiesToRemove(accessesbefore,accessesafter)    
-                if removeaccesses:
-                    print("remove the following accesses")
-                    for accesstoremove in removeaccesses:
-                        print(accesstoremove)
-                if addaccesses:
-                    print("add the following accesses")
-                    for accesstoadd in addaccesses:
-                        print(accesstoadd)
+                removeaccesses = entitiesToRemove(accessesbefore,accessesafter) 
 
 
+                # determine whether policy status changed
+                if statusbefore != statusafter:
+                    if statusafter == 'Enabled': # an enabled policy is treated as a new policy
+                        print('Policy now enabled, same as a new policy - add ACLS')    
 
-            acl_change_counter = 0
+                        permstr = getPermSeq(rowafter.Accesses.split(","))    
+                        
+                        # obtain a dictionary list of all security principals
+                        spids = getSPIDs(rowafter.Users,rowafter.Groups)
+
+                        # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                        hdfsentries = rowafter.Resources.strip("path=[").strip("]").split(",")
+                        for hdfsentry in hdfsentries:
+                            print('calling bulk set')
+                            acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
+
+                    if statusafter == 'Disabled': # a disabled policy is treated in the same way as a deleted policy
+                        print('Policy now disabled therefore delete ACLs')  
+
+                        spids = getSPIDs(rowafter.Users,rowafter.Groups)
+                        hdfsentries = rowafter.Resources.strip("path=[").strip("]").split(",")
+                        for hdfsentry in hdfsentries:
+                            print('calling bulk remove per directory path')
+                            acl_change_counter += removeADLSBulkPermissions(storagetoken, spids, hdfsentry.strip())
+
+                elif row.Status == 'Enabled': # if there wasn't a status change, then only bother dealing with modifications is the policy is set to enabled i.e. we don't care about policies that were disabled prior to the change and are still not enabled. when / if they are eventually enabled they will be treated as any new policy would
+                    
+                    # determine resources (path) changes. A path change will be apply as a delete of the previous values (users/groups/perms) and an addition of the new values, hence no need to process any further changes as this will bring the entire policy record up to date   
+                    addresources = entitiesToAdd(resourcesbefore,resourcesafter)
+                    removeresources = entitiesToRemove(resourcesbefore,resourcesafter)   
+                    if removeresources or addresources: 
+                        if removeresources:
+                            print("remove all previous permissions from the following resources: ")
+                            for resourcetoremove in removeresources:
+                                print(resourcetoremove)
+                                spids = getSPIDs(rowbefore.Users,rowbefore.Groups)
+                                hdfsentries = rowbefore.Resources.strip("path=[").strip("]").split(",")
+                                for hdfsentry in hdfsentries:
+                                    print('calling bulk remove per directory path')
+                                    acl_change_counter += removeADLSBulkPermissions(storagetoken, spids, resourcetoremove)
+
+                        if addresources:
+                            print("add the new permissions to the following resources")
+                            for resourcetoadd in addresources:
+                                print(resourcetoadd)
+                                spids = getSPIDs(rowafter.Users,rowafter.Groups)
+                                # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                                hdfsentries = rowafter.Resources.strip("path=[").strip("]").split(",")
+                                for hdfsentry in hdfsentries:
+                                    print('calling bulk set')
+                                    acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
+
+                    # only process incremental changes to groups or users, if there wasn't either a status change or a path change
+                    elif removegroups or removeusers: 
+                        #########################
+                        # determine user or group changes
+                        ##########################
+
+
+                        if removegroups or removeusers:
+                            print("Remove the following groups")
+                            for grouptoremove in removegroups:
+                                print(grouptoremove)
+                            print("Remove the following users")
+                            for usertoremove in removeusers:
+                                print(usertoremove)
+
+                            # get associated IDs for the user/groups to be removed
+                            spids = getSPIDs(removeusers,removegroups)
+                            hdfsentries = rowbefore.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                print('calling bulk remove per directory path')
+                                acl_change_counter += removeADLSBulkPermissions(storagetoken, spids,  hdfsentry.strip())
+
+                        if addgroups or addusers: 
+                            print("add the following groups")
+                            for grouptoadd in addgroups:
+                                print(grouptoadd)
+                            print("add the following users")
+                            for usertoadd in addusers:
+                                print(usertoadd)
+
+                            spids = getSPIDs(addusers,addgroups)  ## Note: here we could potentially use the rowafter.Users/Groups list (i.e. the current image of groups) instead of the delta/difference
+                                # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                            hdfsentries = rowafter.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                print('calling bulk set')
+                                acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
+
+                    elif  removeaccesses or addaccesses:  # only process changes to permissions if they were done as part of another change above!
+                        #######################################
+                        # determine access/permissions changes
+                        ######################################
+                        # note we do not actually need to calculate the differences in permissions because they must be done as a delete of ACLs using the before image and an addition of new ACLs using the after image ie there is no incremental way to remove just a read or a write permission individually AFAIK
+                        if removeaccesses:
+                            print("remove the following accesses")
+                            for accesstoremove in removeaccesses:
+                                print(accesstoremove)
+
+                            spids = getSPIDs(rowbefore.Groups,rowbefore.Users)
+                            hdfsentries = rowbefore.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                print('calling bulk remove per directory path')
+                                acl_change_counter += removeADLSBulkPermissions(storagetoken, spids,  hdfsentry.strip())
+
+                        if addaccesses:
+                            print("add the following accesses")
+                            for accesstoadd in addaccesses:
+                                print(accesstoadd)
+
+                            spids = getSPIDs(rowafter.Users,rowafter.Groups)  ## Note: here we could potentially use the rowafter.Users/Groups list (i.e. the current image of groups) instead of the delta/difference
+                            # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                            hdfsentries = rowafter.Resources.strip("path=[").strip("]").split(",")
+                            for hdfsentry in hdfsentries:
+                                print('calling bulk set')
+                                acl_change_counter += setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)
+
+                    else:
+                        print("Identified change found in the record set which did not pertain to paths, users, groups, permissions. Change has been ignored")
+                else: 
+                    print("No other changes to process.")
+
+
+            now =  datetime.datetime.utcnow()
+            progendtime = now.strftime('%Y-%m-%d %H:%M:%S')
 
             # save checkpoint in control table
-            set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + formatted_date + "','"+ formatted_date + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
-            #print(set_ct_info)
+            set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
+            print(set_ct_info)
             cursor.execute(set_ct_info)
 
-    except pyodbc.DatabaseError as err:
-            cnxn.commit()
-            sqlstate = err.args[1]
-            sqlstate = sqlstate.split(".")
-            print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
-    else:
-            cnxn.commit()
-            print('Successfully processed file!')
+    #except pyodbc.DatabaseError as err:
+    #        cnxn.commit()
+    #        sqlstate = err.args[1]
+    #        sqlstate = sqlstate.split(".")
+    #        print('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
+    #else:
+    #        cnxn.commit()
+    #        print('Done')
     finally:
             cnxn.autocommit = True
 
@@ -274,6 +450,69 @@ def setADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
     return(response["filesSuccessful"])
 
+# a variation of the function above which access a dictionary object of users and groups so that we can set the ACLs in bulk with a comma seprated list of ACEs (access control entries)
+def setADLSBulkPermissions(aadtoken, spids, adlpath, permissions):
+    acentry = ""
+    for sp in spids:
+        #print(spids[sp])
+        for spid in spids[sp]:
+          #print("Preparing " + sp + ' permissions for ' + spid)
+          acentry += sp+':'+spid+ ':'+permissions+',default:'+sp+':'+spid + ':'+permissions +','
+    acentry = acentry.rstrip(',') 
+    #print("Setting permission: "+acentry)
+    #print(acentry.rstrip(','))
+    basestorageuri = 'https://baselake.dfs.core.windows.net/base'
+    spnaccsuffix = ''
+    # Read documentation here -> https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
+    puuid = str(uuid.uuid4())
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl':acentry,'x-ms-client-request-id': '%s' % puuid}
+    request_path = basestorageuri+adlpath+"?action=setAccessControlRecursive&mode=modify"
+    print("Setting " + permissions + " ACLs  " + acentry + " on " +adlpath + "...")
+    t1_start = perf_counter() 
+    r = requests.patch(request_path, headers=headers)
+    response = r.json()
+    t1_stop = perf_counter()
+    #print(r.text)
+    if r.status_code == 200:
+      print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+    else:
+      print("Error: " + str(r.text))
+    return(response["filesSuccessful"])
+
+    #aces = spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid
+
+
+def removeADLSBulkPermissions(aadtoken, spids, adlpath):
+    ## no permissions str required in a remove call
+    acentry = ""
+    for sp in spids:
+        #print(spids[sp])
+        for spid in spids[sp]:
+          #print("Preparing " + sp + ' permissions for ' + spid)
+          acentry += sp+':'+spid +',default:'+sp+':'+spid +','
+    acentry = acentry.rstrip(',') 
+    basestorageuri = 'https://baselake.dfs.core.windows.net/base'
+    spnaccsuffix = ''
+    #print(spn + '-' + adlpath)
+    # Read documentation here -> https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
+    #Setup the endpoint
+    puuid = str(uuid.uuid4())
+    #print('Log analytics UUID'+ puuid)
+    headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl': acentry,'x-ms-client-request-id': '%s' % puuid}
+    request_path = basestorageuri+adlpath+"?action=setAccessControlRecursive&mode=remove"
+    print("Removing ACLs: " + acentry + " on " +adlpath + "...")
+    t1_start = perf_counter() 
+    r = requests.patch(request_path, headers=headers)
+    response = r.json()
+    t1_stop = perf_counter()
+
+    if r.status_code == 200:
+      print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+    else:
+      print("Error: " + str(r.text))
+    return(response["filesSuccessful"])
+    #print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+
 def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     basestorageuri = 'https://baselake.dfs.core.windows.net/base'
     spnaccsuffix = ''
@@ -293,25 +532,32 @@ def removeADLSPermissions(aadtoken, spn, adlpath, permissions, spntype):
     print("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
 
 
-def getSPID(aadtoken, spn, spntype):
+def getSPID(aadtoken, spname, spntype):
+    # Graph docs - Odata filter: https://docs.microsoft.com/en-us/graph/query-parameters#filter-parameter
     if spntype == 'users': odatafilterfield = "userPrincipalName"
     else: odatafilterfield = "displayName"
-    print("Tenant look up for " + spntype + ": " + spn )
+    print("Tenant look up for " + spntype + ": " + spname.strip() )
     headers ={'Content-Type': 'application/json','Authorization': 'Bearer %s' % aadtoken}
-    request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startswith("+odatafilterfield+",'"+spn.replace('#','%23')+"')"
+    request_str = "https://graph.microsoft.com/v1.0/"+spntype+"?$filter=startsWith("+odatafilterfield+",'"+spname.strip().replace('#','%23')+"')"
     #https://graph.microsoft.com/v1.0/users?$filter=startswith(userPrincipalName,'nihurt@microsoft.com')
     #print(aadtoken)
     #print(request_str)
     r = requests.get(request_str, headers=headers)
-    response = r.json()
-    print("Found OID " + response["value"][0]["id"])
-    return response["value"][0]["id"]
+    if r.status_code==200:
+        response = r.json()
+        print("Found OID " + response["value"][0]["id"])
+        return response["value"][0]["id"]
+    else:
+        print("Warning: Could not find user ID!!!")
+        # at this point should we aboort the process or just log the failure?? TBD by client
+        return None
     
 
-def getBearerToken(resourcetype):
+def getBearerToken(resourcetype,spnid,spnsecret):
     endpoint = 'https://login.microsoftonline.com/af26513a-fe59-4005-967d-bd744f659830/oauth2/token'
+
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    payload = 'grant_type=client_credentials&client_id=a86005a7-2865-4db4-8c0f-305247a0544e&client_secret=z0BYa3~7~qjY~Qfg7Q2.1_U~D3Hgb0vu~z&resource=https%3A%2F%2F'+resourcetype+'%2F'
+    payload = 'grant_type=client_credentials&client_id='+spnid+'&client_secret='+ spnsecret + '&resource=https%3A%2F%2F'+resourcetype+'%2F'
     r = requests.post(endpoint, headers=headers, data=payload)
     response = r.json()
     print("Obtaining AAD bearer token for resource "+ resourcetype + "...")
