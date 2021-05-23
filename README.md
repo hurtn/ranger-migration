@@ -1,6 +1,6 @@
 ### Ranger Migration Synchronisation App
 
-There are two python applications in this repo which:
+The intended purpose of these applications is to periodically synchronise resource based Ranger policies with ADLS storage ACLs. There are two Python applications in this repo which:
 1. storePolicies: read Policies from a csv file (future capability to read from Ranger API), store in a CDC enabled table in SQL
 2. applyPolicies: read changes from the SQL table and apply the permissions to Storage ACLs
 
@@ -30,38 +30,37 @@ There are two python applications in this repo which:
 ## Current limitations
 - Only supports HDFS service type
 - Only support resource based policies in ranger, does not support attribute / tag based policies
+- Is not yet implemented as a durabable function
+- Does not make Ranger API calls yet, currently on a static export file from ranger is supported
 
 ## Latest Improvements
 - Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
-- Convert the ACL API call to Powershell or SDK and make async when moving to durable functions
+
+### Immediate TODOs
+- validate that the Microsoft Graph OID lookup routine which use an Odata startswith filter is robust enough in a representative directory
+- add an exceptions list for users and groups to be ignore in the sync process (these are most likely service accounts or non AAD identites)
+- further investigation and testing of the ranger APIs (currently reading from a static set of policies in csv format) in terms of:
+  - ability to retreive data from multiple ranger stores (endpoints) and store theses with some unique identifier in the table, ie add another column in the policy table to store this.
+  - determine the best way to extract the policy IDs needed to be sync'd and then passed to the ranger API /service/public/api/policy/[policyID]
+  - determine how to combine multiple allow conditions (which end up with duplicate policy IDs in the export) into a single policy record or another identifier which can be used to determine a unique record. (Investigate this by examining the response from the Ranger API)
+- investigate the way in which Ranger returns a large of volume of results, is there some pagination logic that needs to be implemented?
 - Implement Hive support which will query hive to determine the underlying table path
 - Set the base storage path as an App config setting
 
-### Immediate TODOs
-- validate and enhance the graph OID lookup routine which use the Odata filter is robust enough and can handle lookup errors or zero hits
-- add an exceptions list for users and groups to be ignore in the sync process (these are most likely service accounts or non AAD identites)
-- more work needs to be done on the ranger APIs (currently reading from a static set of policies in csv format) in terms of:
-  - ability to retreive data from multiple ranger stores (endpoints) and store theses with some unique identifier in the table, ie add another column in the policy table to store this.
-  - determine the best way to extract the policy IDs needed to be sync'd and then passed to the ranger API /service/public/api/policy/[policyID]
-  - determine how combine multiple allow conditions (which end up with duplicate policy IDs in the export) into a single policy record
-- investigate the way in which Ranger returns a large of volume of results, is there some pagination logic that needs to be implemented?
-- convert the API call to Async
+### Potential TODOs
+- If converting to durable functions, convert the ACL API call to Powershell or SDK and make async when moving to durable functions
 - current only the prior image of the record and the latest image of the record are used to determine changes (see comment 11b in the applyPolicies code), i.e. whilst we could potentially capture intermediate changes through the CDC framework we effectively ignore them e.g. multiple/intermediate updates to the same record, we need to evaluate whether this has any negative consequence as we could miss a change in a complex scenario e.g. trying to add and remove multiple groups/users, with a change in permission set in one go rather than "walking" the timeline of changes. As we may not be capturing every single change in this manner due to the way in which this is a period "pull" rather than push, the store process may not get this level of detail in the capture records. **Currently if such a complex scenario arises, removal of users/groups is handled as a recursive deletion of these users/groups from the ACLs from the previous image of the path (in case this was part of the changed fields), and then the new users/groups are recursively added to the latest image of the path. Note all modifications use the modify operation as opposed to the set operation because set replaces all previous entries of that ACL and there could be ACEs set outside of this process which we do not want to destroy, there using the modify operation ensures that we preserve existing ACLs. See [the docs](https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update) for more info.**
 
 
 ### Future enhancements
-- Investigate whether multiple allow conditions need to be merged into the same policy record
 - Cater for multiple ranger sources (determine identifiers for unique and context awareness / potentially priotisation)
-- Cater for database, users, groups exceptions list
-- Cater for Hive policies
-- Implementation of control table and process run reporting
-- Investigation into SQL DB rather SQL MI compatibility
+- Support for non CDC enabled Databases by using before and after snapshot tables to determine changes instead of CDC.
 - Improve scalability (if required):
   - Migrate app to durable functions
   - Convert ACL API call to asynchronous call
 - Policy Synchronisation Validation
   - Periodically polls and reports on Ranger and ACLs for discrepancies
-  - Option to “force” re-sync of all policy defs (full re-sync vs incremental)
+  - Option to “force” re-sync of all policy defs (full re-sync vs incremental). Note the danger of this apporoach is if ACLs are set outside of this process for other non Ranger users hence the modify mode over set mode was used to prevent inadvertantly overwriting existing ACLs set outside of the sync process
 - Storage ACL report in Power BI
 
 
