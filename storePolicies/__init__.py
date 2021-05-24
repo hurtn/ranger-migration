@@ -119,6 +119,15 @@ def storePolicies():
     finally:
             cnxn.autocommit = True
 
+def fetchRangerPolicyByID(policyId):
+  #usrPass = "admin:Qwe12rty!!"
+  #b64Val = base64.b64encode(usrPass)
+  endpoint = 'https://[clustername].azurehdinsight.net/ranger/service/public/api/policy/'+str(policyId)
+  #headers={"Authorization": "Basic %s" % b64Val}
+  r = requests.get(endpoint, auth=HTTPBasicAuth('admin', 'Qwe12rty!!'))
+  response = r.json()
+  json_formatted_str = json.dumps(response, indent=4)
+  print(json_formatted_str)
 
 storePolicies()
 
