@@ -82,6 +82,7 @@ def getPolicyChanges():
             connxstr=os.environ["DatabaseConnxStr"]
             spnid= os.environ["SPNID"]
             spnsecret= os.environ["SPNSecret"]
+            appname = 'applyPolicies'
 
             dbname = 'policystore'
             stagingtablenm = "ranger_policies_staging"
@@ -95,7 +96,7 @@ def getPolicyChanges():
             cursor = cnxn.cursor()
             now =  datetime.datetime.utcnow()
             progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
-            get_ct_info = "select lsn_checkpoint from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl);"
+            get_ct_info = "select lsn_checkpoint from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl where application = '" + appname +"');"
             #print(get_ct_info)
             print("Getting control table information...")
             cursor.execute(get_ct_info)
@@ -141,7 +142,7 @@ def getPolicyChanges():
               progendtime = now.strftime('%Y-%m-%d %H:%M:%S')
 
               # save checkpoint in control table
-              set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
+              set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('" + appname + "', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
               #print(set_ct_info)
               cursor.execute(set_ct_info)
               # now terminate the program
@@ -468,7 +469,7 @@ def getPolicyChanges():
             progendtime = now.strftime('%Y-%m-%d %H:%M:%S')
 
             # save checkpoint in control table
-            set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
+            set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('" + appname + "', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
             #print(set_ct_info)
             cursor.execute(set_ct_info)
 
