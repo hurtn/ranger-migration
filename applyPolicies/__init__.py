@@ -470,7 +470,7 @@ def getPolicyChanges():
             # save checkpoint in control table
             set_ct_info = "insert into " + dbname + "." + dbschema + ".policy_ctl (application,start_run, end_run, lsn_checkpoint,rows_changed, acls_changed) values ('applyPolicies', current_timestamp,'" + progstarttime + "','"+ progendtime + "'," +str(policy_rows_changed) + "," + str(acl_change_counter)+")"
             #print(set_ct_info)
-            #cursor.execute(set_ct_info)
+            cursor.execute(set_ct_info)
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
