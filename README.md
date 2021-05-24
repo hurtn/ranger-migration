@@ -33,6 +33,9 @@ The intended purpose of these applications is to periodically synchronise resour
 - Is not yet implemented as a durabable function
 - Does not make Ranger API calls yet, currently on a static export file from ranger is supported
 
+## Known issues
+- The CDC logic intermittently fails with "An insufficient number of arguments were supplied for the procedure or function cdc.fn_cdc_get_all_changes_". This is due to the way in which SQL Server returns information about the validity of the lsn ranges i.e. there is no way to distinguish between an LSN which is out of bounds or no change capture information. See the following [documentation](https://docs.microsoft.com/en-us/sql/relational-databases/track-changes/work-with-change-data-sql-server?view=sql-server-ver15#LSN. This error should most likely be trapped and handled accordingly)
+
 ## Latest Improvements
 - Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
 
