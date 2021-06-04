@@ -19,7 +19,11 @@ The intended purpose of these applications is to periodically synchronise resour
 ![image](https://user-images.githubusercontent.com/5063077/119273763-4c3eb080-bc04-11eb-91ed-993f313a06c5.png)
 
 ## Setup of local environment
-- Create a service principal
+- Azure CLI version 2.6.0 or higher
+- One of the following security permissions:
+    - A provisioned Azure Active Directory (AD) security principal that has been assigned the Storage Blob Data Owner role in the scope of the either the target container, parent resource group or subscription.
+    - Owning user of the target container or directory to which you plan to apply ACL settings. To set ACLs recursively, this includes all child items in the target container or directory.
+    - Storage account key.
 - Store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
 - Ensure access to a SQL MI instance or SQL DB (over 2 vcores to support CDC)
 - Store database connection string as an environment variable with the following keyvalue pair and use the jdbc connection format e.g. "DatabaseConnxStr":"Driver={ODBC Driver 13 for SQL Server};Server=tcp:[dbendpointprefix].database.windows.net,3342;Database=[dbname];Uid=[username];Pwd=[password];Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
