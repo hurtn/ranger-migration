@@ -1,0 +1,9 @@
+{
+  "server": "ar79-spark-hive-ext-metastore.azurehdinsight.net",
+  "port": 443,
+  "database": "default",
+  "user_name": "admin",
+  "tables" : [
+    "hivesampletable"
+  ]
+}
