@@ -1,4 +1,6 @@
 ﻿ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
-1016,a hdfs,path=[/base/nyctaxidata/liam1],"hr1, hr2",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ," , write , execute",hdfs,Enabled
-1017,a hdfs,path=[/base/nyctaxidata/liam2],"hr2, hr1",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ,"read , , execute",hdfs,Enabled
+1016,a hdfs,path=[/base/nyctaxidata/liam1],"hr1",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ," , write , execute",hdfs,Enabled
+1017,a hdfs,path=[/base/nyctaxidata/liam2],"hr1",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ,"read , , execute",hdfs,Enabled
 1018,a hdfs,path=[/base/nyctaxidata/liam3],"",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ,"read , write , execute",hdfs,Enabled
+1018,a hdfs,path=[/base/nyctaxidata/liam3],"",liammoat_outlook.com#EXT#@contactliammoat.onmicrosoft.com  ,"read , write , execute",hdfs,Enabled
+1019,a hdfs,path=[/base/nyctaxidata/dawid1],"",dawid.obrocki_microsoft.com#EXT#@contactliammoat.onmicrosoft.com  ,"read , write , execute",hdfs,Enabled

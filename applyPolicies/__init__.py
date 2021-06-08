@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 import asyncio
-from typing import Any
+from typing import Any, Callable, ClassVar
 import urllib
 import pyodbc
 import pandas as pd
@@ -19,6 +19,9 @@ from requests.auth import HTTPBasicAuth
 from time import perf_counter
 from collections import defaultdict
 
+from collections import namedtuple
+import azure.durable_functions as df
+
 from applyPolicies import AclUpdaterService as aclService
 from applyPolicies import GraphApiService as graph
 
@@ -31,7 +34,7 @@ STORAGE_NAME = "centricapoc"
 global cnxn
 
 
-async def getPolicyChanges():
+async def getPolicyChanges(starter:str):
 
     def getPermSeq(perms):
         permstr = ''
@@ -204,7 +207,7 @@ async def getPolicyChanges():
 
             # iterate through the new policy rows
             for row in insertdf.loc[:, ['Resources', 'Groups', 'Users', 'Accesses', 'Status']].itertuples():
-
+                
                 if row.Status == 'Enabled':
                     # determine the permissions rwx
                     permstr = getPermSeq(row.Accesses.split(","))
@@ -218,14 +221,34 @@ async def getPolicyChanges():
 
 
                     new_policy_tasks = []
-                                        
-                    for hdfsentry in hdfsentries:
-                        print('calling bulk set')
-                        new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
+                    
+                    #PermissionUpdateParams = namedtuple('PermissionUpdateParams', ['SPIDs', 'AdlPath', 'Permissions'])              
 
-                    startTimer = perf_counter()                    
-                    await asyncio.wait(new_policy_tasks)                    
-                    stopTimer = perf_counter()
+                    # for hdfsentry in hdfsentries:
+                    #     print('calling bulk set')
+                    # Run as Tasks
+                    #     new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
+                                            
+                        
+                    payloadToOrchestrate = []
+
+                    try:
+                        for hdfsentry in hdfsentries:
+                            payload = {"SPIDs": spids, "AdlPath": hdfsentry.strip(), "Permissions":permstr }    
+                            payloadToOrchestrate.append(payload)                            
+                                                                    
+                        
+                        client = df.DurableOrchestrationClient(starter)
+                        startTimer = perf_counter()                
+                        await client.start_new("applyPoliciesOrchestrator", None, client_input=payloadToOrchestrate)
+                        stopTimer = perf_counter()
+                    except Exception as e:
+                        print(e)
+                                        
+                    #instance_id = await client.start_new() (orchestrator_function(starter))                        
+                                              
+                    
+                    
 
                     print(f'New Policies tasks completed in {stopTimer-startTimer:.3f}')
 
@@ -762,13 +785,20 @@ def getBearerToken(resourcetype, spnid, spnsecret):
 #################################################
 
 
-async def main(mytimer: func.TimerRequest) -> None:
+async def main(mytimer: func.TimerRequest, starter:str) -> None:
     print('applyPolicies function starting...')
 
     if mytimer.past_due:
         print('The timer is past due!')
 
-    tasks = [asyncio.create_task(getPolicyChanges())]
-    await asyncio.wait(tasks)
+    try:        
+        #tasks = [asyncio.create_task(getPolicyChanges())]
+        #await asyncio.wait(tasks)
+        #      
+        await getPolicyChanges(starter)
+        
+    except Exception as e:
+        print("Exceptions in async tasks: {}".format(str(e)))
+    
 
     print('applyPolicies function finished.')
