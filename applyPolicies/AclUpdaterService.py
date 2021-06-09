@@ -58,6 +58,7 @@ async def override_bulk_recursivly(adlPath, acl):
 
             directory_client = get_directory_client_from_path(adlPath)
 
+            # populate with dummy files
             #await create_child_files(directory_client=directory_client, num_child_files=100)
 
             print(directory_client.url)

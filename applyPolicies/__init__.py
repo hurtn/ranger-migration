@@ -19,7 +19,6 @@ from requests.auth import HTTPBasicAuth
 from time import perf_counter
 from collections import defaultdict
 
-from collections import namedtuple
 import azure.durable_functions as df
 
 from applyPolicies import AclUpdaterService as aclService
@@ -32,7 +31,6 @@ STORAGE_URL = "https://centricapoc.dfs.core.windows.net/"
 STORAGE_NAME = "centricapoc"
 
 global cnxn
-
 
 async def getPolicyChanges(starter:str):
 
@@ -219,40 +217,8 @@ async def getPolicyChanges(starter:str):
                     hdfsentries = row.Resources.strip(
                         "path=[").strip("]").split(",")
 
-
-                    new_policy_tasks = []
-                    
-                    #PermissionUpdateParams = namedtuple('PermissionUpdateParams', ['SPIDs', 'AdlPath', 'Permissions'])              
-
-                    # for hdfsentry in hdfsentries:
-                    #     print('calling bulk set')
-                    # Run as Tasks
-                    #     new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
-                                            
-                        
-                    payloadToOrchestrate = []
-
-                    try:
-                        for hdfsentry in hdfsentries:
-                            payload = {"SPIDs": spids, "AdlPath": hdfsentry.strip(), "Permissions":permstr }    
-                            payloadToOrchestrate.append(payload)                            
-                                                                    
-                        
-                        client = df.DurableOrchestrationClient(starter)
-                        startTimer = perf_counter()                
-                        await client.start_new("applyPoliciesOrchestrator", None, client_input=payloadToOrchestrate)
-                        stopTimer = perf_counter()
-                    except Exception as e:
-                        print(e)
+                    await set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids)
                                         
-                    #instance_id = await client.start_new() (orchestrator_function(starter))                        
-                                              
-                    
-                    
-
-                    print(f'New Policies tasks completed in {stopTimer-startTimer:.3f}')
-
-
 
         elif not deleteddf.empty:
             #################################################
@@ -433,17 +399,9 @@ async def getPolicyChanges(starter:str):
 
                         # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                         hdfsentries = rowafter.Resources.strip(
-                            "path=[").strip("]").split(",")
+                            "path=[").strip("]").split(",")                       
 
-                        mod_policy_tasks = []
-                        for hdfsentry in hdfsentries:
-                            print('calling bulk set')
-                            mod_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
-
-                        startTimer = perf_counter()                    
-                        await asyncio.wait(new_policy_tasks)                    
-                        stopTimer = perf_counter()
-                        print(f'Mod Policies tasks completed in {stopTimer-startTimer:.3f}')
+                        await set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids)                                            
 
 
                     if statusafter == 'Disabled':  # a disabled policy is treated in the same way as a deleted policy
@@ -489,16 +447,7 @@ async def getPolicyChanges(starter:str):
                                     rowafter.Users, rowafter.Groups)
                                 # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                                 
-                                new_policy_tasks = []
-                                        
-                                for hdfsentry in hdfsentries:
-                                    print('calling bulk set')
-                                    new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
-
-                                startTimer = perf_counter()                    
-                                await asyncio.wait(new_policy_tasks)                    
-                                stopTimer = perf_counter()
-                                print(f'New Policies tasks completed in {stopTimer-startTimer:.3f}')
+                                await set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids)  
 
                     # only process incremental changes to groups or users, if there wasn't either a status change or a path change
                     elif removegroups or removeusers:
@@ -542,16 +491,8 @@ async def getPolicyChanges(starter:str):
                             # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                             hdfsentries = rowafter.Resources.strip(
                                 "path=[").strip("]").split(",")
-                            new_policy_tasks = []
-                                        
-                            for hdfsentry in hdfsentries:
-                                print('calling bulk set')
-                                new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
-
-                            startTimer = perf_counter()                    
-                            await asyncio.wait(new_policy_tasks)                    
-                            stopTimer = perf_counter()
-                            print(f'New Policies tasks completed in {stopTimer-startTimer:.3f}')
+                           
+                            await set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids)  
 
                     elif removeaccesses or addaccesses:  # only process changes to permissions if they were done as part of another change above!
                         #######################################
@@ -581,16 +522,8 @@ async def getPolicyChanges(starter:str):
                             # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                             hdfsentries = rowafter.Resources.strip(
                                 "path=[").strip("]").split(",")
-                            new_policy_tasks = []
-                                        
-                            for hdfsentry in hdfsentries:
-                                print('calling bulk set')
-                                new_policy_tasks.append(asyncio.create_task(setADLSBulkPermissions(storagetoken, spids, hdfsentry.strip(), permstr)))
 
-                            startTimer = perf_counter()                    
-                            await asyncio.wait(new_policy_tasks)                    
-                            stopTimer = perf_counter()
-                            print(f'New Policies tasks completed in {stopTimer-startTimer:.3f}')
+                            await set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids)  
 
                     else:
                         print("Changes were identified but no action taken. This could be due to: \n- A policy entry was updated but the fields stayed the same, just the order of the entities changed. \n- A change occured that did not pertain to paths, users, groups, permissions. \nThese change have been ignored.")
@@ -650,38 +583,6 @@ async def getPolicyChanges(starter:str):
 
 # a variation of the function above which access a dictionary object of users and groups so that we can set the ACLs in bulk with a comma seprated list of ACEs (access control entries)
 
-
-async def setADLSBulkPermissionsWithTasks(aadtoken, spids, adlpath, permissions, counter):
-
-    async def logWrapper(adlpath, acl, counter):
-        counter += await aclService.override_bulk_recursivly(adlPath=adlpath, acl=acl)
-
-    tasks = []
-    acentry = ""
-
-    for sp in spids:
-
-        for spid in spids[sp]:
-
-            missingBit = 'user::r--,group::r--,other::r--'
-
-            # +',default:'+sp+':'+spid + ':'+permissions +missingBit
-            acentry = sp+':'+spid + ':'+permissions + ','+missingBit
-
-            print(adlpath + ' -> '+acentry)
-
-            tasks.append(asyncio.create_task(logWrapper(
-                adlpath=adlpath, acl=acentry, counter=counter)))
-
-    startTimer = perf_counter()
-    await asyncio.wait(tasks)
-    stopTimer = perf_counter()
-
-    print(f'Completed in {stopTimer-startTimer:.3f}')
-
-    return (counter)
-
-
 async def setADLSBulkPermissions(aadtoken, spids, adlpath, permissions):
 
     acentry = ""
@@ -698,7 +599,6 @@ async def setADLSBulkPermissions(aadtoken, spids, adlpath, permissions):
             print(adlpath + ' -> '+ acentry)
 
             await aclService.override_bulk_recursivly(adlPath=adlpath, acl=acentry)
-
 
 
 def removeADLSBulkPermissions(aadtoken, spids, adlpath):
@@ -777,6 +677,23 @@ def getBearerToken(resourcetype, spnid, spnsecret):
     print("Bearer token obtained.\n")
     return bearertoken
 
+
+# Call the durable function orchestrator                                        
+async def set_policies_recursivly_with_orchestration(starter, hdfsentries, permstr, spids):
+    
+    payloadToOrchestrate = []
+
+    try:
+        for hdfsentry in hdfsentries:
+            payload = {"SPIDs": spids, "AdlPath": hdfsentry.strip(), "Permissions":permstr }    
+            payloadToOrchestrate.append(payload)                            
+                                                                            
+        client = df.DurableOrchestrationClient(starter)
+
+        await client.start_new("applyPoliciesOrchestrator", None, client_input=payloadToOrchestrate)
+        
+    except Exception as e:
+        print(e)                            
 
 #################################################
 #                                               #
