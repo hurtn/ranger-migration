@@ -1,0 +1,12 @@
+{
+  "server": "ar23-spark-esp-ranger-hiveextms.azurehdinsight.net/",
+  "port": 443,
+  "extension": "ranger/service/public/api/policy",
+  "user_name": "admin",
+  "password": "Qwe12rty!!",
+  "filters" : [
+    {
+      "repositoryType" :  "hive"
+    }
+  ]
+}

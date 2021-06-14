@@ -1,4 +1,7 @@
+import logging
+
 from hiveMetastore.hive_ms import fetch_hive_dbs, read_ms_conf
+from ranger.ranger import fetch_ranger_hive_dbs
 from storePolicies import storePolicies
 
 
@@ -20,18 +23,19 @@ def parse_args():
 def main():
     # Parse the arguments
     options = parse_args()
-    print(options)
-
-    # Connect to Hive and fetch the database details in a list
-    list_of_dbs = fetch_hive_dbs(options)
-    print(list_of_dbs)
+    logging.debug(options)
 
     # Connect to Ranger and fetch the Hive policy details in a list
-    ranger_hive_policies = fetch_ranger_hive_policies(options)
-    print(ranger_hive_policies)
+    ranger_hive_dbs = fetch_ranger_hive_dbs(options)
+    logging.debug(ranger_hive_dbs)
+
+    # Now connect to Hive and fetch the database metadata details in a list
+    hive_db_master_list = fetch_hive_dbs(ranger_hive_dbs)
+    logging.debug(hive_db_master_list)
 
     # Store the policies in SQL DB
-    store_policies(options)
+    # store_policies(options)
+
 
 # The ever important dummy main function
 if __name__ == "__main__":
