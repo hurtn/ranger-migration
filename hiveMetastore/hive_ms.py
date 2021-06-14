@@ -8,43 +8,43 @@ from security.keyvault import get_ms_credentials
 
 # Class for storing the information about the Hive DB storage accounts
 class HiveDBMetadata:
-    name = "",
-    desc = "",
-    path = "",
-    owner_name = "",
-    owner_type = "",
-    parameters = "",
-    ranger_policy_id = -1
 
     def __init__(self, name, desc, path, owner_name, owner_type, parameters, ranger_policy_id):
-        self.name = name
-        self.desc = desc
-        self.path = path
-        self.owner_name = owner_name
-        self.owner_type = owner_type
-        self.parameters = parameters
-        self.ranger_policy_id = ranger_policy_id
+        self._name = name
+        self._desc = desc
+        self._path = path
+        self._owner_name = owner_name
+        self._owner_type = owner_type
+        self._parameters = parameters
+        self._ranger_policy_id = ranger_policy_id
 
-    def get_name(self):
-        return self.name
+    @property
+    def name(self):
+        return self._name
 
-    def get_desc(self):
-        return self.desc
+    @property
+    def desc(self):
+        return self._desc
 
-    def get_path(self):
-        return self.path
+    @property
+    def path(self):
+        return self._path
 
-    def get_owner_name(self):
-        return self.owner_name
+    @property
+    def owner_name(self):
+        return self._owner_name
 
-    def get_owner_type(self):
-        return self.owner_type
+    @property
+    def owner_type(self):
+        return self._owner_type
 
-    def get_parameters(self):
-        return self.parameters
+    @property
+    def parameters(self):
+        return self._parameters
 
-    def get_ranger_policy_id(self):
-        return self.ranger_policy_id
+    @property
+    def ranger_policy_id(self):
+        return self._ranger_policy_id
 
 
 # Gets the Hive metastore configurations set in the conf/metastore_conf.json file.
