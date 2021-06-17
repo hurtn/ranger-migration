@@ -26,12 +26,12 @@ def main():
     logging.debug(options)
 
     # Connect to Ranger and fetch the Hive policy details in a list
-    ranger_hive_dbs = fetch_ranger_hive_dbs(options)
-    logging.debug(ranger_hive_dbs)
+    ranger_hive_policies = fetch_ranger_hive_dbs(options)
+    logging.debug(str(ranger_hive_policies))
 
     # Now connect to Hive and fetch the database metadata details in a list
-    hive_db_master_list = fetch_hive_dbs(ranger_hive_dbs)
-    logging.debug(hive_db_master_list)
+    hive_db_master_list = fetch_hive_dbs(ranger_hive_policies)
+    logging.debug(str(hive_db_master_list))
 
     # Store the policies in SQL DB
     # store_policies(options)

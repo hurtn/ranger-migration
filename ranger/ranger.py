@@ -8,24 +8,25 @@ from requests.auth import HTTPBasicAuth
 
 # Ranger policy class
 class RangerPolicy:
-    def __init__(self, policy_id, create_date, update_date, policy_name, resource_name, repository_name,
+    def __init__(self, policy_id, create_date, update_date, policy_name, resource_name, description, repository_name,
                  repository_type, user_list, group_list, perm_list, databases, tables, columns, is_enabled,
                  is_recursive):
-        self._policy_id = policy_id
-        self._create_date = create_date
-        self._update_date = update_date
-        self._policy_name = policy_name
-        self._resource_name = resource_name
-        self._repository_name = repository_name
-        self._repository_type = repository_type
-        self._user_list = user_list
-        self._group_list = group_list
-        self._perm_list = perm_list
-        self._databases = databases
-        self._tables = tables
-        self._columns = columns
-        self._is_enabled = is_enabled
-        self._is_recursive = is_recursive
+        self.policy_id = policy_id
+        self.create_date = create_date
+        self.update_date = update_date
+        self.policy_name = policy_name
+        self.resource_name = resource_name
+        self.desc = description
+        self.repository_name = repository_name
+        self.repository_type = repository_type
+        self.user_list = user_list
+        self.group_list = group_list
+        self.perm_list = perm_list
+        self.databases = databases
+        self.tables = tables
+        self.columns = columns
+        self.is_enabled = is_enabled
+        self.is_recursive = is_recursive
 
     @property
     def policy_id(self):
@@ -66,6 +67,14 @@ class RangerPolicy:
     @resource_name.setter
     def resource_name(self, value):
         self._resource_name = value
+
+    @property
+    def desc(self):
+        return self._desc
+
+    @desc.setter
+    def desc(self, value):
+        self._desc = value
 
     @property
     def repository_type(self):
@@ -154,6 +163,7 @@ def get_ranger_conf():
 
 def get_ranger_policies():
     conf = get_ranger_conf()
+    logging.debug("Ranger config: " + conf)
     all_filters = ""
     for flt in conf.filters:
         key = flt.keys()
@@ -164,7 +174,7 @@ def get_ranger_policies():
     r = requests.get(endpoint, auth=HTTPBasicAuth(conf.username, conf.password))
     policies = r.json()
     json_formatted_policies = json.dumps(policies, indent=4)
-    logging.info(json_formatted_policies)
+    logging.debug("Ranger policies: " + json_formatted_policies)
     return json_formatted_policies
 
 
@@ -172,23 +182,40 @@ def fetch_ranger_hive_dbs(options):
     # At first, let us get the latest Ranger Hive policies
     json_formatted_policies = get_ranger_policies()
 
+    # Handle the pagination case here. Not sure if pagination is indeed present or not
     if json_formatted_policies["totalCount"] > json_formatted_policies["pageSize"]:
-        # Handle the pagination case here. Not sure if pagination is indeed present or not
         pass
 
     all_ranger_hive_policies = []
     for policy in json_formatted_policies["vXPolicies"]:
         if policy["repositoryType"].lower() == "hive":
+            logging.debug("Ranger policy being handled: " + ranger_policy)
+
+            # Flatten the "permMapList" list field
+            users = ""
+            groups = ""
+            perms = ""
+            for perm_map in policy["permMapList"]:
+                for user in perm_map["userList"]:
+                    users += user + ","
+                for group in perm_map["groupList"]:
+                    groups += group + ","
+                for perm in perm_map["permList"]:
+                    perms += group + ","
+
+            # Extract the database name from resource name field
+            resources = policy["resourceName"].split("/")
+            logging.info("Extracted database name " + resources[1])
+
+            # Now we are all set to create the RangerPolicy object
             ranger_policy = RangerPolicy(policy["id"], policy["createDate"], policy["updateDate"], policy["policyName"],
-                                         policy["policyName"], policy["resourceName"], policy["repositoryName"],
-                                         policy["repositoryType"], policy["userList"], policy["groupList"],
-                                         policy["permList"], policy["databases"], policy["tables"], policy["columns"],
-                                         policy["isEnabled"], policy["isRecursive"])
-            all_ranger_hive_policies += ranger_policy
+                                         policy["policyName"], resources[1], policy["repositoryName"],
+                                         policy["repositoryType"], users, groups, perms, policy["databases"],
+                                         policy["tables"], policy["columns"], policy["isEnabled"],
+                                         policy["isRecursive"])
+            all_ranger_hive_policies.append(ranger_policy)
         else:
             logging.info("Not a Hive policy: " + ranger_policy["policyName"] + ". Continuing...")
             continue
 
-    # For each Hive DB from the metadata list, let us populate the corresponding Ranger policy
-    for db_meta in hive_db_meta_list:
-        pass
+    return all_ranger_hive_policies
