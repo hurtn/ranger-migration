@@ -97,14 +97,12 @@ def get_ms_conf():
 
 
 # Connect to the Hive instance
-def connect_hive(server, port, database, ms_key, user_name):
+def connect_hive(server, port, database, user_name, password):
     # Construct the JDBC connection string
     url = ("jdbc:hive2://" + server + ":" + str(port) + "/" + database +
            ";transportMode=http;ssl=true;httpPath=/hive2")
 
     # Connect to Hive
-    password = "Qwe12rty!!"
-    # password = get_ms_credentials(ms_key)
     conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, {'user': user_name, 'password': password})
     return conn.cursor()
 
@@ -121,7 +119,8 @@ def fetch_hive_dbs(ranger_hive_policies):
 
     # Use the metastore configs to connect to HDInsight Hive & get the cursor
     logging.info("Connecting to hive ms")
-    cursor = connect_hive(ms_conf_dict.server, ms_conf_dict.port, ms_conf_dict.database, ms_conf_dict.user_name)
+    cursor = connect_hive(ms_conf_dict.server, ms_conf_dict.port, ms_conf_dict.database, ms_conf_dict.user_name,
+                          ms_conf_dict.password)
     logging.debug(cursor)
 
     # Go through the loop of Ranger Hive policies
