@@ -158,7 +158,6 @@ def get_ranger_policies():
     r = requests.get(endpoint, auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
     policies = r.json()
     logging.debug("Ranger policies: " + str(policies))
-    print("Ranger policies: " + str(policies))
     return policies
 
 

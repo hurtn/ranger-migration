@@ -3,7 +3,7 @@ import logging
 import pathlib
 
 import jaydebeapi
-from security.keyvault import get_ms_credentials
+# from security.keyvault import get_ms_credentials
 
 
 # Class for storing the information about the Hive DB storage accounts

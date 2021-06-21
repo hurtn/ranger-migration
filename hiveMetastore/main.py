@@ -1,8 +1,7 @@
 import logging
 
-from hiveMetastore.hive_ms import fetch_hive_dbs
-from ranger.ranger import fetch_ranger_hive_dbs
-# from storePolicies import storePolicies
+from hive_ms import fetch_hive_dbs
+from ranger import fetch_ranger_hive_dbs
 
 
 # Parse the command line arguments and returns parsed object
@@ -18,10 +17,17 @@ def parse_args():
 #   3. Store the policies in a SQL DB - append, update or delete based on the current Ranger policies
 #   4. Via CDC, look for changes that have happened in the last iteration
 #   5. Apply the storage ACLs as appropriate.
-def main():
-    # Parse the arguments
+def main() -> object:
+    """
+
+    :rtype: object
+    """
+    # Parse the arguments - DUMMY for the time being
     options = parse_args()
     logging.debug(options)
+
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format='%(relativeCreated)6d %(threadName)s %(message)s')
 
     # Connect to Ranger and fetch the Hive policy details in a list
     ranger_hive_policies = fetch_ranger_hive_dbs(options)
@@ -30,11 +36,8 @@ def main():
     # Now connect to Hive and fetch the database metadata details in a list
     hive_db_master_list = fetch_hive_dbs(ranger_hive_policies)
     logging.debug(str(hive_db_master_list))
-
-    # Store the policies in SQL DB
-    # store_policies(options)
+    return hive_db_master_list
 
 
 # The ever important dummy main function
-if __name__ == "__main__":
-    main()
+main()

@@ -17,8 +17,3 @@ def get_ranger_credentials(ranger_key):
 # Get Azure Key Vault entry for storage account
 def get_storage_credentials(storage_account_key):
     pass
-
-
-# Get Azure Key Vault entry for Azure functions
-def get_func_credentials(func_key):
-    pass
