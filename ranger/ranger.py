@@ -9,8 +9,7 @@ from requests.auth import HTTPBasicAuth
 # Ranger policy class
 class RangerPolicy:
     def __init__(self, policy_id, create_date, update_date, policy_name, resource_name, description, repository_name,
-                 repository_type, user_list, group_list, perm_list, databases, tables, columns, is_enabled,
-                 is_recursive):
+                 repository_type, user_list, group_list, perm_list, databases, is_enabled, is_recursive):
         self.policy_id = policy_id
         self.create_date = create_date
         self.update_date = update_date
@@ -23,8 +22,6 @@ class RangerPolicy:
         self.group_list = group_list
         self.perm_list = perm_list
         self.databases = databases
-        self.tables = tables
-        self.columns = columns
         self.is_enabled = is_enabled
         self.is_recursive = is_recursive
 
@@ -117,22 +114,6 @@ class RangerPolicy:
         self._databases = value
 
     @property
-    def tables(self):
-        return self._tables
-
-    @tables.setter
-    def tables(self, value):
-        self._tables = value
-
-    @property
-    def columns(self):
-        return self._columns
-
-    @columns.setter
-    def columns(self, value):
-        self._columns = value
-
-    @property
     def is_enabled(self):
         return self._is_enabled
 
@@ -153,8 +134,8 @@ def get_ranger_conf():
     # Gets the Ranger configurations set in the conf/ranger_conf.json file.
     data = None
     proj_home_abs_path = pathlib.Path(__file__).parent.parent.absolute()
-    conf_file_path = proj_home_abs_path + "conf/ranger_conf.json"
-    with open('conf_file_path') as json_file:
+    conf_file_path = str(proj_home_abs_path) + "/conf/ranger_conf.json"
+    with open(conf_file_path) as json_file:
         data = json.load(json_file)
     logging.info("Read the Ranger config")
     logging.debug(data)
@@ -163,19 +144,22 @@ def get_ranger_conf():
 
 def get_ranger_policies():
     conf = get_ranger_conf()
-    logging.debug("Ranger config: " + conf)
+    logging.debug("Ranger config: " + str(conf))
     all_filters = ""
-    for flt in conf.filters:
+    for flt in conf["filters"]:
         key = flt.keys()
-        value = flt[key]
-        all_filters += key + "=" + value
-        all_filters += "&"
-    endpoint = "https://" + conf.server + conf.extension + "?" + all_filters
-    r = requests.get(endpoint, auth=HTTPBasicAuth(conf.username, conf.password))
+        for k in key:
+            value = flt[k]
+            all_filters += k + "=" + value
+            all_filters += "&"
+    logging.debug("All filters: " + all_filters)
+    endpoint = "https://" + conf["server"] + "/" + conf["extension"] + "?" + all_filters
+    logging.debug("Ranger end point: " + endpoint)
+    r = requests.get(endpoint, auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
     policies = r.json()
-    json_formatted_policies = json.dumps(policies, indent=4)
-    logging.debug("Ranger policies: " + json_formatted_policies)
-    return json_formatted_policies
+    logging.debug("Ranger policies: " + str(policies))
+    print("Ranger policies: " + str(policies))
+    return policies
 
 
 def fetch_ranger_hive_dbs(options):
@@ -188,9 +172,8 @@ def fetch_ranger_hive_dbs(options):
 
     all_ranger_hive_policies = []
     for policy in json_formatted_policies["vXPolicies"]:
-        if policy["repositoryType"].lower() == "hive":
-            logging.debug("Ranger policy being handled: " + ranger_policy)
-
+        logging.debug("Ranger policy being handled: " + str(policy))
+        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy):
             # Flatten the "permMapList" list field
             users = ""
             groups = ""
@@ -201,7 +184,7 @@ def fetch_ranger_hive_dbs(options):
                 for group in perm_map["groupList"]:
                     groups += group + ","
                 for perm in perm_map["permList"]:
-                    perms += group + ","
+                    perms += perm + ","
 
             # Extract the database name from resource name field
             resources = policy["resourceName"].split("/")
@@ -211,11 +194,10 @@ def fetch_ranger_hive_dbs(options):
             ranger_policy = RangerPolicy(policy["id"], policy["createDate"], policy["updateDate"], policy["policyName"],
                                          policy["policyName"], resources[1], policy["repositoryName"],
                                          policy["repositoryType"], users, groups, perms, policy["databases"],
-                                         policy["tables"], policy["columns"], policy["isEnabled"],
-                                         policy["isRecursive"])
+                                         policy["isEnabled"], policy["isRecursive"])
             all_ranger_hive_policies.append(ranger_policy)
         else:
-            logging.info("Not a Hive policy: " + ranger_policy["policyName"] + ". Continuing...")
+            logging.info("Ignoring policy: " + policy["policyName"] + ". Continuing...")
             continue
 
     return all_ranger_hive_policies

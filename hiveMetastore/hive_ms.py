@@ -88,8 +88,8 @@ class HiveDBMetadata:
 def get_ms_conf():
     data = None
     proj_home_abs_path = pathlib.Path(__file__).parent.parent.absolute()
-    conf_file_path = proj_home_abs_path + "conf/metastore_conf.json"
-    with open('conf_file_path') as json_file:
+    conf_file_path = str(proj_home_abs_path) + "/conf/metastore_conf.json"
+    with open(conf_file_path) as json_file:
         data = json.load(json_file)
     logging.info("Read the Hive MS config")
 
@@ -119,8 +119,8 @@ def fetch_hive_dbs(ranger_hive_policies):
 
     # Use the metastore configs to connect to HDInsight Hive & get the cursor
     logging.info("Connecting to hive ms")
-    cursor = connect_hive(ms_conf_dict.server, ms_conf_dict.port, ms_conf_dict.database, ms_conf_dict.user_name,
-                          ms_conf_dict.password)
+    cursor = connect_hive(ms_conf_dict["server"], ms_conf_dict["port"], ms_conf_dict["database"],
+                          ms_conf_dict["user_name"], ms_conf_dict["password"])
     logging.debug(cursor)
 
     # Go through the loop of Ranger Hive policies
@@ -136,5 +136,6 @@ def fetch_hive_dbs(ranger_hive_policies):
                                  db_details[5], policy.policy_id, policy.policy_name)
         ranger_hive_dbs.append(hive_db)
 
+    logging.debug("Ranger Hive DBs: " + ranger_hive_dbs)
     logging.debug("fetch_hive_dbs() end")
     return ranger_hive_dbs
