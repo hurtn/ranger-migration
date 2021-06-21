@@ -33,6 +33,9 @@ jobs:
         pip install -r requirements.txt --target=".python_packages/lib/site-packages"
         popd
 
+    - name: 'Azure Login'
+      uses: Azure/login@v1
+
     - name: 'Run Azure Functions Action'
       uses: Azure/functions-action@v1
       id: fa
