@@ -1,5 +1,5 @@
 {
-  "server": "ar12-spark-esp-hivems-ranger.azurehdinsight.net",
+  "server": "ar78-spark-ex-hivems-ranger.azurehdinsight.net",
   "port": 443,
   "database": "default",
   "user_name": "admin",

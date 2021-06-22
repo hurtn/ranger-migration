@@ -17,7 +17,7 @@ def parse_args():
 #   3. Store the policies in a SQL DB - append, update or delete based on the current Ranger policies
 #   4. Via CDC, look for changes that have happened in the last iteration
 #   5. Apply the storage ACLs as appropriate.
-def get_ranger_policies_hive_dbs() -> object:
+def get_ranger_policies_hive_dbs():
     """
 
     :rtype: object
@@ -36,5 +36,5 @@ def get_ranger_policies_hive_dbs() -> object:
     # Now connect to Hive and fetch the database metadata details in a list
     hive_db_master_list = fetch_hive_dbs(ranger_hive_policies)
     logging.debug(str(hive_db_master_list))
-    return hive_db_master_list
+    return ranger_hive_policies, hive_db_master_list
 

@@ -103,15 +103,14 @@ def connect_hive(server, port, database, user_name, password):
            ";transportMode=http;ssl=true;httpPath=/hive2")
 
     # Connect to Hive
-    conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, {'user': user_name, 'password': password})
+    conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, driver_args={'user': user_name,
+                                                                                   'password': password})
     return conn.cursor()
 
 
 # Fetches the Hive DB metadata from Hive MS for the databases in the Ranger policies & puts the same into the
 # HiveDBMetadata object
 def fetch_hive_dbs(ranger_hive_policies):
-    logging.debug("fetch_hive_dbs() start")
-
     # Read in the configurations for metastore
     logging.info("Reading the hive ms config")
     ms_conf_dict = get_ms_conf()
@@ -129,13 +128,13 @@ def fetch_hive_dbs(ranger_hive_policies):
         db_name = policy.resource_name
         logging.info("Fetching details of database: " + db_name)
         cursor.execute("DESCRIBE DATABASE EXTENDED " + db_name)
-        db_details = cursor.fetchall()
+        db_details = cursor.fetchall()[0]
 
+        print(str(db_details))
         # Create a DB metadata object
         hive_db = HiveDBMetadata(db_details[0], db_details[1], db_details[2], db_details[3], db_details[4],
                                  db_details[5], policy.policy_id, policy.policy_name)
         ranger_hive_dbs.append(hive_db)
 
-    logging.debug("Ranger Hive DBs: " + ranger_hive_dbs)
-    logging.debug("fetch_hive_dbs() end")
+    logging.debug("Ranger Hive DBs: " + str(ranger_hive_dbs))
     return ranger_hive_dbs

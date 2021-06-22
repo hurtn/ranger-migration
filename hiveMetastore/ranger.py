@@ -8,14 +8,13 @@ from requests.auth import HTTPBasicAuth
 
 # Ranger policy class
 class RangerPolicy:
-    def __init__(self, policy_id, create_date, update_date, policy_name, resource_name, description, repository_name,
+    def __init__(self, policy_id, create_date, update_date, policy_name, resource_name, repository_name,
                  repository_type, user_list, group_list, perm_list, databases, is_enabled, is_recursive):
         self.policy_id = policy_id
         self.create_date = create_date
         self.update_date = update_date
         self.policy_name = policy_name
         self.resource_name = resource_name
-        self.desc = description
         self.repository_name = repository_name
         self.repository_type = repository_type
         self.user_list = user_list
@@ -64,14 +63,6 @@ class RangerPolicy:
     @resource_name.setter
     def resource_name(self, value):
         self._resource_name = value
-
-    @property
-    def desc(self):
-        return self._desc
-
-    @desc.setter
-    def desc(self, value):
-        self._desc = value
 
     @property
     def repository_type(self):
@@ -172,7 +163,8 @@ def fetch_ranger_hive_dbs(options):
     all_ranger_hive_policies = []
     for policy in json_formatted_policies["vXPolicies"]:
         logging.debug("Ranger policy being handled: " + str(policy))
-        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy):
+        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and \
+                policy["databases"] != '' and policy["databases"] != "*":
             # Flatten the "permMapList" list field
             users = ""
             groups = ""
@@ -188,12 +180,10 @@ def fetch_ranger_hive_dbs(options):
             # Extract the database name from resource name field
             resources = policy["resourceName"].split("/")
             logging.info("Extracted database name " + resources[1])
-
             # Now we are all set to create the RangerPolicy object
             ranger_policy = RangerPolicy(policy["id"], policy["createDate"], policy["updateDate"], policy["policyName"],
-                                         policy["policyName"], resources[1], policy["repositoryName"],
-                                         policy["repositoryType"], users, groups, perms, policy["databases"],
-                                         policy["isEnabled"], policy["isRecursive"])
+                                         resources[1], policy["repositoryName"], policy["repositoryType"], users,
+                                         groups, perms, policy["databases"], policy["isEnabled"], policy["isRecursive"])
             all_ranger_hive_policies.append(ranger_policy)
         else:
             logging.info("Ignoring policy: " + policy["policyName"] + ". Continuing...")
