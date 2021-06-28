@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import event
 import sqlalchemy
 import azure.functions as func
+from hive import HiveHelperOptions, HiveHelper
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -19,8 +20,26 @@ def main(mytimer: func.TimerRequest) -> None:
         logging.info('The timer is past due!')
 
     logging.info('Python timer trigger function ran at %s', utc_timestamp)
+
+    opts = HiveHelperOptions(
+    host="ar78-spark-ex-hivems-ranger.azurehdinsight.net",
+    port='443',
+    user='admin',
+    password='Qwe12rty!!',
+    hive_jar='./storePolicies/hive-jdbc-3.1.0.3.1.4.65-3-standalone.jar',
+    schema='transportMode=http;ssl=true;httpPath=/hive2',
+    )
+
+    h = HiveHelper(database='default', opts=opts)
+    logging.info('Attempting to connect to hive')
+    h.connect()
+
+    tables = h.get_tables()
+    
+    for t in tables:
+        print(t)
+  
     storePolicies()
-   
 
 def storePolicies():
     connxstr=os.environ["DatabaseConnxStr"]
@@ -37,7 +56,7 @@ def storePolicies():
             targettablenm = "ranger_policies"
             batchsize = 200
             params = urllib.parse.quote_plus(connxstr)
-            collist = ['ID','Name','Resources','Groups','Users','Accesses','Service Type','Status']
+            collist = ['ID','Name','Resources','Groups','Users','Accesses','Service Type','Status','permMapList']
             #ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
 
             
@@ -57,7 +76,7 @@ def storePolicies():
                     if executemany:
                         cursor.fast_executemany = True
 
-
+            
             for allpolicies in pd.read_csv(r"NHPolicySample.csv", chunksize=batchsize,names=collist):
               hdfspolicies = allpolicies[(allpolicies['Service Type']=='hdfs')]
               #print(hdfspolicies.head())
@@ -72,13 +91,13 @@ def storePolicies():
             ## set the checksum on each record so we can use this to determine whether the record changed
             cnxn = pyodbc.connect(connxstr)
             cursor = cnxn.cursor()
-            updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set checksum =  HASHBYTES('SHA1',  (select id,Name,Resources,Groups,Users,Accesses,[Service Type],Status for xml raw)) "
+            updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set checksum =  HASHBYTES('SHA1',  (select id,Name,Resources,permMapList,[Service Type],Status,[paths] for xml raw)) "
             cursor.execute(updatesql)
             cnxn.commit()
 
             rowcount = -1
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
-            USING (select id,Name,Resources,Groups,Users,Accesses,[Service Type],Status,Checksum from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
+            USING (select id,Name,Resources,Groups,Users,Accesses,[Service Type],Status,Checksum,permMapList,paths from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
             ) AS Source
             ON (Target.[id] = Source.[id])
             WHEN MATCHED AND Target.checksum <> source.checksum THEN
@@ -88,8 +107,10 @@ def storePolicies():
                         , Target.[Accesses] = Source.[Accesses]
                         , Target.[Status] = Source.[Status]
                         , Target.[checksum] = Source.[checksum]
+                        , Target.[permMapList] = Source.[permMapList]
+                        , Target.[paths] = Source.[paths]
             WHEN NOT MATCHED BY TARGET THEN
-                INSERT ([id],[Name], [Resources], [Groups],[Users],[Accesses],[Service Type],[Status],[Checksum])
+                INSERT ([id],[Name], [Resources], [Groups],[Users],[Accesses],[Service Type],[Status],[Checksum],[permMapList],[paths])
                 VALUES (
                 Source.[ID]
                 , Source.[Name]
@@ -100,6 +121,8 @@ def storePolicies():
                 , Source.[Service Type]
                 , Source.[Status]
                 , Source.[Checksum]
+                , Source.[permMapList]
+                , Source.[paths]
                 )
             WHEN NOT MATCHED BY SOURCE
                 THEN DELETE; """
@@ -130,5 +153,6 @@ def fetchRangerPolicyByID(policyId):
   print(json_formatted_str)
 
 storePolicies()
+
 
 
