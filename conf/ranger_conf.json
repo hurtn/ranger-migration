@@ -1,5 +1,5 @@
 {
-  "server": "ar12-spark-esp-hivems-ranger.azurehdinsight.net",
+  "server": "ar12-spark-esp.azurehdinsight.net",
   "port": 443,
   "extension": "ranger/service/public/api/policy",
   "user_name": "admin",
