@@ -1,7 +1,7 @@
 {
-  "server": "ar78-spark-ex-hivems-ranger.azurehdinsight.net",
+  "server": "ar12-spark-esp.azurehdinsight.net",
   "port": 443,
   "database": "default",
-  "user_name": "admin",
+  "user_name": "john.doe@ajithramanathoutlook.onmicrosoft.com",
   "password": "Qwe12rty!!"
 }

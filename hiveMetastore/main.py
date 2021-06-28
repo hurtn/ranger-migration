@@ -1,5 +1,9 @@
 import logging
 
+import numpy as np
+import pandas as pd
+from tabulate import tabulate
+
 from hive_ms import fetch_hive_dbs
 from ranger import fetch_ranger_hive_dbs
 
@@ -34,7 +38,11 @@ def get_ranger_policies_hive_dbs():
     logging.debug(str(ranger_hive_policies))
 
     # Now connect to Hive and fetch the database metadata details in a list
-    hive_db_master_list = fetch_hive_dbs(ranger_hive_policies)
-    logging.debug(str(hive_db_master_list))
-    return ranger_hive_policies, hive_db_master_list
+    fetch_hive_dbs(ranger_hive_policies)
 
+    pd.set_option("display.max_columns", None)
+    ranger_pdf = pd.DataFrame([x.as_dict() for x in ranger_hive_policies])
+
+    print(tabulate(ranger_pdf, headers='keys', tablefmt='psql'))
+
+    return ranger_pdf
