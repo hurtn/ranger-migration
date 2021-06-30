@@ -56,7 +56,7 @@ def storePolicies():
             targettablenm = "ranger_policies"
             batchsize = 200
             params = urllib.parse.quote_plus(connxstr)
-            collist = ['ID','Name','Resources','Groups','Users','Accesses','Service Type','Status','permMapList']
+            collist = ['ID','Name','Resources','Service Type','Status','permMapList']
             #ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
 
             
@@ -77,16 +77,20 @@ def storePolicies():
                         cursor.fast_executemany = True
 
             
-            for allpolicies in pd.read_csv(r"NHPolicySample.csv", chunksize=batchsize,names=collist):
-              hdfspolicies = allpolicies[(allpolicies['Service Type']=='hdfs')]
+            for csvpolicies in pd.read_csv(r"NHPolicySample.csv", chunksize=batchsize,names=collist):
+              hdfspolicies = csvpolicies[(csvpolicies['Service Type']=='hdfs')]
               #print(hdfspolicies.head())
-              hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
+              #hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
             
-          
+            hivepolicies = getRangerPolicies()
+            allpolicies = hivepolicies.append(hdfspolicies)
+            allpolicies = allpolicies.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+            allpolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
+
             sqltext = """select count(*) from """ + dbname + "." + dbschema + "." + stagingtablenm
             cursor.execute(sqltext)
             rowcount = cursor.fetchone()[0]
-            print(str(rowcount) + " records inserted")
+            print(str(rowcount) + " records inserted into staging table")
 
             ## set the checksum on each record so we can use this to determine whether the record changed
             cnxn = pyodbc.connect(connxstr)
@@ -97,27 +101,21 @@ def storePolicies():
 
             rowcount = -1
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
-            USING (select id,Name,Resources,Groups,Users,Accesses,[Service Type],Status,Checksum,permMapList,paths from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
+            USING (select id,Name,Resources,[Service Type],Status,Checksum,permMapList,paths from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
             ) AS Source
             ON (Target.[id] = Source.[id])
             WHEN MATCHED AND Target.checksum <> source.checksum THEN
                 UPDATE SET Target.[resources] = Source.[resources]
-                        , Target.[Groups] = Source.[Groups]
-                        , Target.[Users] = Source.[Users]
-                        , Target.[Accesses] = Source.[Accesses]
                         , Target.[Status] = Source.[Status]
                         , Target.[checksum] = Source.[checksum]
                         , Target.[permMapList] = Source.[permMapList]
                         , Target.[paths] = Source.[paths]
             WHEN NOT MATCHED BY TARGET THEN
-                INSERT ([id],[Name], [Resources], [Groups],[Users],[Accesses],[Service Type],[Status],[Checksum],[permMapList],[paths])
+                INSERT ([id],[Name], [Resources],[Service Type],[Status],[Checksum],[permMapList],[paths])
                 VALUES (
                 Source.[ID]
                 , Source.[Name]
                 , Source.[Resources]
-                , Source.[Groups]
-                , Source.[Users]
-                , Source.[Accesses]
                 , Source.[Service Type]
                 , Source.[Status]
                 , Source.[Checksum]
@@ -129,7 +127,7 @@ def storePolicies():
             #print(mergesql)
             rowcount = cursor.execute(mergesql).rowcount
             cnxn.commit()
-            print("rows merged "+str(rowcount))
+            print(str(rowcount) + " rows merged into target policy table")
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -152,7 +150,22 @@ def fetchRangerPolicyByID(policyId):
   json_formatted_str = json.dumps(response, indent=4)
   print(json_formatted_str)
 
+def getRangerPolicies():
+    rangercollist = ['policy_id','policy_name','repository_name','repository_type','perm_map_list','databases','is_enabled','is_recursive','paths','db_names']
+    tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names']
+    #rangerpolicies = pd.read_csv(r"sampledataframe.csv",names=rangercollist)
+    #print(rangerpolicies.to_string())
+    for rangerpolicies in pd.read_csv(r"sampledataframe.csv", chunksize=200,names=rangercollist,header=0):
+      #print(rangerpolicies.head())
+      rangerpolicies.columns = tgtcollist
+      #print(rangerpolicies.head())
+      # assign a source name is necessary
+      #newdf = rangerpolicies.assign(RepositoryName='ranger1') 
+      return rangerpolicies
+
 storePolicies()
+#getRangerPolicies()
+
 
 
 
