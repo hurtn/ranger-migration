@@ -28,10 +28,8 @@ The intended purpose of these applications is to periodically synchronise resour
 - Populate some entries in the NHPolicySample csv which match the paths in your storage location, users and groups in your tenant.
 
 ## Current limitations
-- Only supports HDFS service type
+- Only supports HDFS & Hive service type
 - Only support resource based policies in ranger, does not support attribute / tag based policies
-- Is not yet implemented as a durabable function
-- Does not make Ranger API calls yet, currently on a static export file from ranger is supported
 
 ## Known issues
 - The CDC logic intermittently fails with "An insufficient number of arguments were supplied for the procedure or function cdc.fn_cdc_get_all_changes_". This is due to the way in which SQL Server returns information about the validity of the lsn ranges i.e. there is no way to distinguish between an LSN which is out of bounds or no change capture information. See the following [documentation](https://docs.microsoft.com/en-us/sql/relational-databases/track-changes/work-with-change-data-sql-server?view=sql-server-ver15#LSN. This error should most likely be trapped and handled accordingly)
