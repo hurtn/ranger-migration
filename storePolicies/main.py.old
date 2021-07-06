@@ -1,0 +1,20 @@
+from hive import HiveHelperOptions, HiveHelper
+
+
+opts = HiveHelperOptions(
+    host="nhar23-spark-esp.azurehdinsight.net",
+    port='443',
+    user='john.doe@scimsyncorg.onmicrosoft.com',
+    password='Plok09ij',
+    hive_jar='./storePolicies/hive-jdbc-3.1.0.3.1.4.65-3-standalone.jar',
+    schema='transportMode=http;ssl=true;httpPath=/hive2',
+)
+
+h = HiveHelper(database='default', opts=opts)
+
+h.connect()
+
+tables = h.get_tables()
+
+for t in tables:
+    print(t)

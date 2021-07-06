@@ -1,0 +1,2 @@
+﻿ID,Name,Resources,Service Type,Status,permMapList
+3197,a hdfs,path=[/base1/nyctaxidata],hdfs,Enabled,test

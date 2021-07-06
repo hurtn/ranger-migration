@@ -24,8 +24,7 @@ def connect_hive(server, port, database, user_name, password):
     url = ("jdbc:hive2://" + server + ":" + str(port) + "/" + database +
            ";transportMode=http;ssl=true;httpPath=/hive2")
     # Connect to Hive
-    conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, driver_args={'user': user_name,
-                                                                                   'password': password})
+    conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, [user_name, password],"dependencies\hive-jdbc-3.1.0.3.1.4.65-3-standalone.jar")
     return conn.cursor()
 
 

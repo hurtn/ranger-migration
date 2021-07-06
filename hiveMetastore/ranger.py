@@ -122,8 +122,9 @@ def get_ranger_policies():
             all_filters += "&"
     logging.debug("All filters: " + all_filters)
     endpoint = "https://" + conf["server"] + "/" + conf["extension"] + "?" + all_filters
-    logging.debug("Ranger end point: " + endpoint)
+    print("Ranger end point: " + endpoint)
     r = requests.get(endpoint, auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
+    print(r)
     policies = r.json()
     logging.debug("Ranger policies: " + str(policies))
     return policies
@@ -139,7 +140,7 @@ def fetch_ranger_hive_dbs(options):
 
     all_ranger_hive_policies = []
     for policy in json_formatted_policies["vXPolicies"]:
-        logging.debug("Ranger policy being handled: " + str(policy))
+        print("Ranger policy being handled: " + str(policy))
         if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and '' != policy["databases"]:
             # Now we are all set to create the RangerPolicy object
             ranger_policy = RangerPolicy(policy["id"], policy["policyName"], policy["repositoryName"],

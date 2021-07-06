@@ -57,7 +57,7 @@ select sys.fn_cdc_map_time_to_lsn('smallest greater than', lsn_checkpoint) from 
 use policystore;
 select sys.fn_cdc_get_min_lsn('dbo_ranger_policies') min_lsn, sys.fn_cdc_get_max_lsn() max_lsn ;
 select * from policy_ctl
-
+truncate table policy_ctl
 create table dummy (id int)
 insert into dummy values (1)
 
@@ -66,6 +66,9 @@ select sys.fn_cdc_get_min_lsn('dbo_ranger_policies') min_lsn, sys.fn_cdc_get_max
 
 drop table ranger_policies;
 alter table ranger_policies alter column checksum nvarchar(1000)
+alter table ranger_policies add permMapList nvarchar(4000);
+alter table ranger_policies_staging add permMapList nvarchar(4000);
+update  ranger_policies set permMapList = '[{"userList":["nihurt_microsoft.com#EXT#_cooceltd.onmicrosoft.com#EXT#"],"groupList":["hr1","hr2"],"permList":["all"]},{"userList":[],"groupList":["hr3"],"permList":["select","read"]}]'
 create table ranger_policies (
     ID int,
     Name NVARCHAR(100),
@@ -82,7 +85,9 @@ create table ranger_policies (
 
 
 select *  from dbo.ranger_policies;
-
+update  dbo.ranger_policies set groups =  'hr2,hr3' where groups = 'hr2.hr3'
+drop table dbo.ranger_policies
+select * from dbo.policy_ctl
 update pi set checksum =  HASHBYTES('SHA1',  (select pi.id,pi.Name,pi.Resources,pi.Groups,pi.Users,pi.Accesses,pi.[Service Type],pi.Status for xml raw)) 
 FROM
   dbo.ranger_policies pi
@@ -163,9 +168,57 @@ DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map
             select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
             from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old');
 
-            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-19 20:48:29')
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-20 08:30:19')
                                         SET @to_lsn = sys.fn_cdc_get_max_lsn()
             select *
             from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old') order by __$seqval,id,__$operation;
 
             select sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-19 23:36:13')
+
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-22 17:19:30')
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn()
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_get_min_lsn('dbo_ranger_policies');
+                                               SET @to_lsn = sys.fn_cdc_get_max_lsn();
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_get_min_lsn('dbo_ranger_policies');
+                                               SET @to_lsn = sys.fn_cdc_get_max_lsn();
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-23 11:23:25')
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn()
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+            select * from dbo.policy_ctl
+
+DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_map_time_to_lsn('smallest greater than','2021-05-23 18:22:52')
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn()
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+
+            sys.fn_cdc_increment_lsn
+            DECLARE  @from_lsn binary(10), @to_lsn binary(10); SET @from_lsn =sys.fn_cdc_increment_lsn(sys.fn_cdc_map_time_to_lsn('smallest less than equal','2021-05-24 13:20:40'))
+                                        SET @to_lsn = sys.fn_cdc_get_max_lsn()
+            select [__$operation],[id],[Name],[Resources],[Groups],[Users],[Accesses],[Status]
+            from cdc.fn_cdc_get_all_changes_dbo_ranger_policies(@from_lsn, @to_lsn, 'all update old')
+            order by id,__$seqval,__$operation;
+
+            select lsn_checkpoint from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl where application = '" + appname +"');
+
+            select sys.fn_cdc_map_time_to_lsn('smallest greater than',lsn_checkpoint),sys.fn_cdc_get_max_lsn() from dbo.policy_ctl where id = (select max(id) from dbo.policy_ctl) where ;
+
+
+            alter table 

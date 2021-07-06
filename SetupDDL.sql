@@ -16,18 +16,15 @@ create table policy_ctl (
 -- this stores the latest copy of all policies from ranger
 create table ranger_policies (
     ID int,
-    ranger_database NVARCHAR(2000),
     Name NVARCHAR(100),
+    RepositoryName NVARCHAR(2000),   
     Resources  NVARCHAR(2000),
-    Paths  NVARCHAR(2000),
-    Groups  NVARCHAR(2000),
-    Users NVARCHAR(2000),
-    Accesses  NVARCHAR(2000),
+    paths  NVARCHAR(2000),
     permMapList nvarchar(4000),
     [Service Type]  NVARCHAR(100),
     Status  NVARCHAR(100),
     checksum NVARCHAR(400),
-    CONSTRAINT "PK_Policies" PRIMARY KEY CLUSTERED ("ID") );
+    CONSTRAINT "PK_Policies" PRIMARY KEY CLUSTERED ("ID","RepositoryName") );
 
 -- Create policy staging table
 -- this stores the latest copy of all policies from ranger prior to merging with the main table
@@ -41,9 +38,6 @@ create table ranger_policies_staging (
     Name NVARCHAR(100),
     Resources  NVARCHAR(2000),
     Paths  NVARCHAR(2000),
-    Groups  NVARCHAR(2000),
-    Users NVARCHAR(2000),
-    Accesses  NVARCHAR(2000),
     permMapList nvarchar(4000)
     [Service Type]  NVARCHAR(100),
     Status  NVARCHAR(100),
