@@ -20,7 +20,7 @@ The intended purpose of these applications is to periodically synchronise resour
 
 ## Setup of environment
 - Create a service principal and secret. Ensure the service principal has sufficient priviledges to lookup users in the directory e.g.
- ![image](https://user-images.githubusercontent.com/5063077/124997393-70364400-e042-11eb-81da-36c79e2e0e9a.png)
+![image](https://user-images.githubusercontent.com/5063077/124998868-0a978700-e045-11eb-93f2-ce271fe24029.png)
 
 - If developing locally, store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
 - Ensure access to a SQL MI instance or SQL DB (serverless or GP with over 2 vcores to support CDC - this is currently a preview capability)
