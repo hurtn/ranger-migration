@@ -18,11 +18,13 @@ The intended purpose of these applications is to periodically synchronise resour
 
 ![image](https://user-images.githubusercontent.com/5063077/119273763-4c3eb080-bc04-11eb-91ed-993f313a06c5.png)
 
-## Setup of local environment
-- Create a service principal
-- Store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
-- Ensure access to a SQL MI instance or SQL DB (over 2 vcores to support CDC)
-- Store database connection string as an environment variable with the following keyvalue pair and use the jdbc connection format e.g. "DatabaseConnxStr":"Driver={ODBC Driver 13 for SQL Server};Server=tcp:[dbendpointprefix].database.windows.net,3342;Database=[dbname];Uid=[username];Pwd=[password];Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
+## Setup of environment
+- Create a service principal and secret. Ensure the service principal has sufficient priviledges to lookup users in the directory e.g.
+![image](https://user-images.githubusercontent.com/5063077/124998868-0a978700-e045-11eb-93f2-ce271fe24029.png)
+
+- If developing locally, store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
+- Ensure access to a SQL MI instance or SQL DB (serverless or GP with over 2 vcores to support CDC - this is currently a preview capability)
+- Store database connection string as an environment variable with the following keyvalue pair and use the jdbc connection format e.g. "DatabaseConnxStr":"Driver={ODBC Driver 13 for SQL Server};Server=tcp:[dbendpointprefix].database.windows.net,3342;Database=[dbname];Uid=[username];Pwd=[password];Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;" or if using managed identity of the function app use Authentication=ActiveDirectoryMsi instead of UID and pwd.
 
 - Create a database and run the setup script
 - Populate some entries in the NHPolicySample csv which match the paths in your storage location, users and groups in your tenant.
