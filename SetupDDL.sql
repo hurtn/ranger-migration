@@ -1,3 +1,13 @@
+-- Notes:
+-- If using managed instance, ensure you have created a new database and have logged into that database using an AAD admin (set in the portal)
+-- In order to use managed service identity authentication from your function app you will need to run the following script as that user (same name as the functino app) therefore
+-- 1. ensure you have created a contained database user for the managed identity (same name as the function app) and given necessary privileges for example:
+-- CREATE USER [name-of-your-function-app] FROM EXTERNAL PROVIDER;
+-- GRANT CONTROL ON DATABASE::[database-name] TO [name-of-your-function-app];
+-- EXEC sp_addrolemember N'db_owner', N'name-of-your-function-app'
+-- 2. uncomment the line below and the last line in this script to run it as the managed identity
+--execute as user = '[name-of-your-function-app]'
+
 -- Table DDL required for Ranger Migration / Synchronisation App
 -- See the github repo for more details: https://github.com/hurtn/ranger-migration
 
@@ -50,10 +60,11 @@ EXEC sys.sp_cdc_enable_db ;
 -- Enable CDC on the policies table. If running as managed identity, you need to impersonate the MI before running this statement. This requires giving the MI db_owner role. eg.ADD 
 --EXEC sp_addrolemember N'db_owner', N'policysyncdemoapp'
 --Then run the following with a priviledged user substituting the username below accordingly
-execute as user = 'yourruntimeusername'
+
  EXEC sys.sp_cdc_enable_table
  @source_schema = 'dbo',
  @source_name = 'ranger_policies',
  @role_name = 'null',
  @supports_net_changes = 1;
-revert
+
+--revert
