@@ -38,6 +38,8 @@ The intended purpose of these applications is to periodically synchronise resour
 
 ## Latest Improvements
 - Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
+- No JAR based hive driver is required to connect to hive - the existing pyodbc driver is used and queries are made directly against the Hive database. This reduces the number of dependencies (JVM and JPype) and makes the application bunder much smaller as the Hive Jar was >100MB.
+- Recorded video demos of mutiple test cases including adding and removing of permissions in Ranger to one or more policies and associated databases. Check out the videos folder!
 
 ### Immediate TODOs
 - validate that the Microsoft Graph OID lookup routine which use an Odata startswith filter is robust enough in a representative directory
