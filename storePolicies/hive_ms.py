@@ -52,9 +52,6 @@ def get_ms_conf():
 
 
 def database_quality_check(db_name, cursor):
-    #hiveconnxstr = "Driver={ODBC Driver 13 for SQL Server};Server=tcp:hiveextmsranger.database.windows.net,3342;Database=hivems;Uid=ajithr;Pwd=Qwe12rty!!;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
-    #cnxn = pyodbc.connect(hiveconnxstr)
-    #cursor = cnxn.cursor()
     all_dbs = []
     # db_name param could be a csv string. So, go around the loop to account for this
     split_db_names = db_name.split(",")
@@ -94,7 +91,6 @@ def fetch_hive_dbs(ranger_hive_policies, servername):
     #logging.debug(cursor)
 
     # Go through the loop of Ranger Hive policies
-    #hiveconnxstr = "Driver={ODBC Driver 17 for SQL Server};Server=tcp:hiveextmsranger.database.windows.net,3342;Database=hivems;Uid=ajithr;Pwd=Qwe12rty!!;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
     hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
     cnxn = pyodbc.connect(hiveconnxstr)
     print("Connecting to hive " + hiveconnxstr)
