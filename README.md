@@ -39,18 +39,12 @@ The intended purpose of these applications is to periodically synchronise resour
 ## Latest Improvements
 - Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
 - No JAR based hive driver is required to connect to hive - the existing pyodbc driver is used and queries are made directly against the Hive database. This reduces the number of dependencies (JVM and JPype) and makes the application bunder much smaller as the Hive Jar was >100MB.
+- Utilise the permMapList array to cater for multiple permissions, users and groups assigned to a single policy
 - Recorded video demos of mutiple test cases including adding and removing of permissions in Ranger to one or more policies and associated databases. Check out the videos folder!
 
 ### Immediate TODOs
 - validate that the Microsoft Graph OID lookup routine which use an Odata startswith filter is robust enough in a representative directory
 - add an exceptions list for users and groups to be ignore in the sync process (these are most likely service accounts or non AAD identites)
-- further investigation and testing of the ranger APIs (currently reading from a static set of policies in csv format) in terms of:
-  - ability to retreive data from multiple ranger stores (endpoints) and store theses with some unique identifier in the table, ie add another column in the policy table to store this.
-  - determine the best way to extract the policy IDs needed to be sync'd and then passed to the ranger API /service/public/api/policy/[policyID]
-  - determine how to combine multiple allow conditions (which end up with duplicate policy IDs in the export) into a single policy record or another identifier which can be used to determine a unique record. (Investigate this by examining the response from the Ranger API)
-- investigate the way in which Ranger returns a large of volume of results, is there some pagination logic that needs to be implemented?
-- Implement Hive support which will query hive to determine the underlying table path
-- Set the base storage path as an App config setting
 
 ### Potential TODOs
 - If converting to durable functions, convert the ACL API call to Powershell or SDK and make async when moving to durable functions
@@ -58,11 +52,8 @@ The intended purpose of these applications is to periodically synchronise resour
 
 
 ### Future enhancements
-- Cater for multiple ranger sources (determine identifiers for unique and context awareness / potentially priotisation)
+- Whilst multiple ranger sources are supported via a comma separated string in the configuration parameter hdiclusters, an additional feature is required to map these to multiple Hive databases and their respective connection string.
 - Support for non CDC enabled Databases by using before and after snapshot tables to determine changes instead of CDC.
-- Improve scalability (if required):
-  - Migrate app to durable functions
-  - Convert ACL API call to asynchronous call
 - Policy Synchronisation Validation
   - Periodically polls and reports on Ranger and ACLs for discrepancies
   - Option to “force” re-sync of all policy defs (full re-sync vs incremental). Note the danger of this apporoach is if ACLs are set outside of this process for other non Ranger users hence the modify mode over set mode was used to prevent inadvertantly overwriting existing ACLs set outside of the sync process
