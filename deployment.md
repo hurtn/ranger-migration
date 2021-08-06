@@ -90,4 +90,4 @@ If you wish to use private networking then the following post configuraiton are 
 2. Ensure [the following](https://docs.microsoft.com/en-us/azure/azure-functions/functions-create-vnet#configure-your-function-app-settings) function appc config settings have been applied
 3. Create private endpoints for the database in the default subnet.
 
-  
+8. Configure diagnostic logging to Log Analytics. Please see [the documentation](https://docs.microsoft.com/en-us/azure/azure-functions/functions-monitor-log-analytics) for more details.  
