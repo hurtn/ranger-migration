@@ -4,11 +4,11 @@ The intended purpose of these applications is to periodically synchronise resour
 1. storePolicies: read Policies from a csv file (future capability to read from Ranger API), store in a CDC enabled table in SQL
 2. applyPolicies: read changes from the SQL table and apply the permissions to Storage ACLs
 
-![image](https://user-images.githubusercontent.com/5063077/118630985-fa8ec400-b7c6-11eb-9831-5dcaabbf8ab4.png)
+![image](https://user-images.githubusercontent.com/5063077/128572626-1d1378bf-eafb-4a5a-a470-dbfab9f727b6.png)
 
-### storePolicies process flow: store HDFS Policies
+### storePolicies process flow: store Hive Policies
 
-![image](https://user-images.githubusercontent.com/5063077/118631057-0d08fd80-b7c7-11eb-9626-0ed6259bfd96.png)
+![image](https://user-images.githubusercontent.com/5063077/128572674-165cebf4-6e61-4b0b-ab85-89f28be4f49e.png)
 
 ### applyPolicies process flow: apply policy changes
 
@@ -16,11 +16,10 @@ The intended purpose of these applications is to periodically synchronise resour
 
 ### Process flow for modified policies
 
-![image](https://user-images.githubusercontent.com/5063077/119273763-4c3eb080-bc04-11eb-91ed-993f313a06c5.png)
+![image](https://user-images.githubusercontent.com/5063077/128572798-d69d3b24-8d6d-4ab6-95d5-29118044797b.png)
 
-## Setup of environment
-- Create a service principal and secret. Ensure the service principal has sufficient priviledges to lookup users in the directory e.g.
-![image](https://user-images.githubusercontent.com/5063077/124998868-0a978700-e045-11eb-93f2-ce271fe24029.png)
+## Deployment details
+Please see the [following deployment guide](https://github.com/hurtn/ranger-migration/blob/master/deployment.md)
 
 - If developing locally, store the service principal client ID and secret as environment variables using keys spnid and spnsecret. Note you may need to restart your pc for these to take effect.
 - Ensure access to a SQL MI instance or SQL DB (serverless or GP with over 2 vcores to support CDC - this is currently a preview capability)
