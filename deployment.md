@@ -91,3 +91,6 @@ If you wish to use private networking then the following post configuraiton are 
 3. Create private endpoints for the database in the default subnet.
 
 8. Configure diagnostic logging to Log Analytics. Please see [the documentation](https://docs.microsoft.com/en-us/azure/azure-functions/functions-monitor-log-analytics) for more details.  
+9. AAD directory permissions - in order to look up users and groups in the directory the following permissions need to be granted to either the service principal or managed identity
+![image](https://user-images.githubusercontent.com/5063077/124998868-0a978700-e045-11eb-93f2-ce271fe24029.png)
+
