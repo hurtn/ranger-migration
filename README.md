@@ -1,4 +1,4 @@
-### Ranger Migration Synchronisation App
+### Ranger Migration / Synchronisation App
 
 The intended purpose of this set of applications is to periodically synchronise resource based Ranger policies with ADLS storage ACLs. 
 There are two Python applications in this repo which:
