@@ -43,6 +43,7 @@ If the managed identity of the Function App is to be used throughout the solutio
 6. Target __ADLS storage account__ where the ACLs will be applied (may exist already)
 7. Ranger and Hive services, usually deployed as part of __HDInsight__.
   - an AAD user/service account with appropriate priviledges (e.g. admin role on the clusters) to authenticate against the Ranger API and Hive database.
+8. Optional: deploy a jumpbox VM inside the VNet to faciliate Database or Storage Account configuration once these services have been locked down.
 
 ## Configure the Function App
 
