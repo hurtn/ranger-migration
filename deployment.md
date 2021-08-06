@@ -1,4 +1,4 @@
-### Infrastructure Prerequisites
+## Infrastructure Requirements
 
 If the managed identity of the Function App is to be used throughout the solution then skip the first step, otherwise create a service principal to set permissions on the data lake and access the SQL database.
 
@@ -13,26 +13,26 @@ If the managed identity of the Function App is to be used throughout the solutio
         ```
         {
         "appId": "xxxx",
-        "displayName": "kh-dbricks-fn",
-        "name": "http://kh-dbricks-fn",
+        "displayName": "xxxx",
+        "name": "xxxx",
         "password": "xxxx",
         "tenant": "xxxx"
         }
         ```
 
-2. Function App with the following configuration
- -  Python runtime stack
- -  Version 3.8
+2. __Function App__ with the following configuration:
+ -  Python version 3.6
+ -  Function runtime version ~3
  -  Default storage account options
  -  Linux operating system
  -  Premium app service plan
  -  Enable App Insights 
-3. Enable managed identity of the function app.
+3. Enable managed identity of the function app if you are not using the service principal.
   https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity?tabs=dotnet#add-a-system-assigned-identity
 
 
-3. SQL Managed Instance Database to store the Ranger policies and create a single database. 
-4. If you wish to use the managed identity of the Function App as a database user then:
+4. __SQL Managed Instance Database__ to store the Ranger policies and create a single database. 
+5. If you wish to use the managed identity of the Function App as a database user then:
   - Ensure the SQL MI identity has read permissions on the AAD. See [the following documentation](https://docs.microsoft.com/en-gb/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#azure-ad-admin-with-a-server-in-sql-database)
   - Set an AAD admin and login to the database
   - Create the user and provide necessary permissions e.g.:
@@ -40,11 +40,11 @@ If the managed identity of the Function App is to be used throughout the solutio
       - GRANT CONTROL ON DATABASE::[centricapolicydb] TO [Function App name];
     Otherwise create a SQL user, provide permissions to the database and make a note of the user and password for later.
 
-5. Target storage account where the ACLs will be applied (may exist already)
-6. Ranger and Hive services, usually deployed as part of HDInsight.
+6. Target __ADLS storage account__ where the ACLs will be applied (may exist already)
+7. Ranger and Hive services, usually deployed as part of __HDInsight__.
   - an AAD user/service account with appropriate priviledges (e.g. admin role on the clusters) to authenticate against the Ranger API and Hive database.
 
-### Deploy and configure the Function App
+## Configure the Function App
 
 1. Clone this repo to your local environment
 2. Navigate to the ranger-migration directory and deploy the function app code using the command below with the necessary pre-requisites. 
@@ -56,14 +56,12 @@ Local Prerequisites
  * `az` cli
  * `.NET Core SDK` version 3.1
 
-
     ```
     func azure functionapp publish ranger-migration
     ```
 
-
 4. Configure the following app settings
--  DatabaseConnxStr: This is the connection string to the SQL database in item 3 above. The format is Driver={ODBC Driver 17 for SQL Server};Server=tcp:[server].database.windows.net,1433;Database=[database];Authentication=ActiveDirectoryMsi. This uses the managed identity of the Function App to authenticate against the database which requires configuration as described in Step 4. If you are using SQL auth then please use Uid=xxxxx;Pwd=xxxxx instead of the Authentication flag.
+-  DatabaseConnxStr: This is the connection string to the SQL database in item 3 above. The format is Driver={ODBC Driver 17 for SQL Server};Server=tcp:[server].database.windows.net,1433;Database=[database];Authentication=ActiveDirectoryMsi. This uses the managed identity of the Function App to authenticate against the database which requires configuration as described in Step 4 above. If you are using SQL auth then please use Uid=xxxxx;Pwd=xxxxx instead of the Authentication flag.
 -  dbname: This is the name of the database created in step 3 above
 -  dbschema: Database schema, usually dbo
 -  hdiclusters: comma separated list of server names which will be used to extract the policies via the Ranger API. To this name "-int.azurehdinsight.net" is added to complete the endpoint details.
@@ -73,15 +71,14 @@ Local Prerequisites
 -  SPNID: Service principal client ID (only required if using a service principal vs Fn app identity to set ACL permissions)
 -  SPNSecret: Service principal secret. Note this can be stored securely as a key vault value. Use the format @Microsoft.KeyVault(SecretUri=https://keyvaultname.vault.azure.net/secrets/spnsecret/id)
 -  tenantID: Tenant ID. This is used when looking up user/group object IDs in AAD
--  
 
-5.  Assign permissions to the __Service Principal__ or __Managed Identity__to access the Database, KeyVault and Storage
+5.  Assign permissions to the __Service Principal__ or __Managed Identity__ to access the Database, KeyVault and Storage
 
     1. To access key vault, add an Access Policy so that the identity has permissions to get secrets
-    2. Follow step 4 above to grant permissions to the database
-    3. Add the Storage Blob Data Owner or custom role provied in the repository which denies blob data access
+    2. Follow step 4 in the infrastructure requirements above to grant permissions to the database
+    3. To the target storage account, add the Storage Blob Data Owner or custom role (provied in this repository which denies blob data access) to the identity
 
-6.  Run the setup script setupddl.sql with the correct user.
+6.  Run the setup script setupddl.sql in this repository:
     - Read the comments at the top of the script file. 
     - If using the managed identity of the function app then login to the database with a priviledged account which has permissions to execute the script on behalf of the function app managed identity. Uncomment the "execute as" statement and enter the function app managed identity name to ensure that CDC is created for the user specified in the function app connection string  
     - If using a SQL user, then login to the database and run the script.
