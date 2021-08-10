@@ -5,6 +5,12 @@ There are two Python applications in this repo which:
 1. storePolicies: retrieve policies from one or Ranger policy stores and store these in a SQL database table
 2. applyPolicies: read changes from the policy table (using the CDC API) and apply the permissions as Storage ACLs
 
+#### Latest Improvements
+- Recorded demos of mutiple test cases including adding and removing of permissions in Ranger to one or more policies and associated databases. Please see [the videos folder](https://github.com/hurtn/ranger-migration/tree/master/videos)
+- Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
+- No JAR based hive driver is required to connect to hive - the existing pyodbc driver is used and queries are made directly against the Hive database. This reduces the number of dependencies (JVM and JPype) and makes the application bunder much smaller as the Hive Jar was >100MB.
+- Utilise the permMapList array to cater for multiple permissions, users and groups assigned to a single policy
+
 #### Summary of Features and Functionality
 1. Retrieve and store policies from multiple Ranger policy stores
 2. Look up database location in the Hive metastore database and store it with the associated policy entry
@@ -32,12 +38,6 @@ There are two Python applications in this repo which:
 
 #### Deployment details
 Please see the [following deployment guide](https://github.com/hurtn/ranger-migration/blob/master/deployment.md)
-
-#### Latest Improvements
-- Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
-- No JAR based hive driver is required to connect to hive - the existing pyodbc driver is used and queries are made directly against the Hive database. This reduces the number of dependencies (JVM and JPype) and makes the application bunder much smaller as the Hive Jar was >100MB.
-- Utilise the permMapList array to cater for multiple permissions, users and groups assigned to a single policy
-- Recorded video demos of mutiple test cases including adding and removing of permissions in Ranger to one or more policies and associated databases. Check out the videos folder!
 
 ### Immediate TODOs
 - add an exceptions list for users and groups to be ignore in the sync process (these are most likely service accounts or non AAD identites)
