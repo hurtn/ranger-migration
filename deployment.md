@@ -30,6 +30,7 @@ If the managed identity of the Function App is to be used throughout the solutio
 3. Enable managed identity of the function app if you are not using the service principal.
   https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity?tabs=dotnet#add-a-system-assigned-identity
 
+3.5 If you require private networking then at this point you may need to upgrade your storage account from gen1 to gen2. Click on the configuration blade and click the upgrade button. This will allow you to create private endpoints to the storage account for the function app running within the vnet.
 
 4. __SQL Managed Instance Database__ to store the Ranger policies and create a single database. 
 5. If you wish to use the managed identity of the Function App as a database user then:
