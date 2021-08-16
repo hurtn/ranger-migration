@@ -23,7 +23,7 @@
 import json
 import logging
 import pathlib
-
+import os
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -127,6 +127,10 @@ def get_ranger_conf():
     conf_file_path = str(proj_home_abs_path) + "/conf/ranger_conf.json"
     with open(conf_file_path) as json_file:
         data = json.load(json_file)
+    if os.environ["rangerusername"]:
+        data["user_name"].append(os.environ["rangerusername"])
+    if os.environ["rangerpassword"]:
+        data["password"].append(os.environ["rangerpassword"])                 
     return data
 
 
@@ -135,7 +139,7 @@ def get_ranger_policies(servername):
     if servername:
       pservername = servername
     else:
-      pservername = ms_conf_dict["server"]
+      pservername = conf["server"]
 
     all_filters = ""
     for flt in conf["filters"]:
