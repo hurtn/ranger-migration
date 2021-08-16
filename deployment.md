@@ -55,7 +55,7 @@ If the managed identity of the Function App is to be used throughout the solutio
 Local Prerequisites
 
  * `func` cli version 3
- * `az` cli
+ * `az` cli - requires you to az login and then set the subscription e.g. az account set --subscription "your-subscription-guid"
  * `.NET Core SDK` version 3.1
 
     ```
