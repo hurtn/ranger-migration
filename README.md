@@ -24,6 +24,9 @@ There are two Python applications in this repo which:
 
 ![image](https://user-images.githubusercontent.com/5063077/128572626-1d1378bf-eafb-4a5a-a470-dbfab9f727b6.png)
 
+#### Deployment details
+Please see the [following deployment guide](https://github.com/hurtn/ranger-migration/blob/master/deployment.md)
+
 #### storePolicies process flow: store Hive Policies
 
 ![image](https://user-images.githubusercontent.com/5063077/128572674-165cebf4-6e61-4b0b-ab85-89f28be4f49e.png)
@@ -35,9 +38,6 @@ There are two Python applications in this repo which:
 #### Process flow for modified policies
 
 ![image](https://user-images.githubusercontent.com/5063077/128572798-d69d3b24-8d6d-4ab6-95d5-29118044797b.png)
-
-#### Deployment details
-Please see the [following deployment guide](https://github.com/hurtn/ranger-migration/blob/master/deployment.md)
 
 ### Immediate TODOs
 - add an exceptions list for users and groups to be ignore in the sync process (these are most likely service accounts or non AAD identites)
