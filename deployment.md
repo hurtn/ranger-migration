@@ -67,6 +67,7 @@ Local Prerequisites
 -  dbname: This is the name of the database created in step 3 above
 -  dbschema: Database schema, usually dbo
 -  hdiclusters: comma separated list of server names which will be used to extract the policies via the Ranger API. To this name "-int.azurehdinsight.net" is added to complete the endpoint details.
+-  basestorageendpoint: This is the filesystem endpoint of the target storage location e.g. https://[storage_accoount].dfs.core.windows.net/[container]
 -  HiveDatabaseConnxStr: This is the database connection string to the Hive metastore
 -  ScheduleStoreAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
