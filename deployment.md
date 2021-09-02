@@ -59,6 +59,8 @@ Local Prerequisites
  * `.NET Core SDK` version 3.1
 
     ```
+    az login
+    az account set --subscription "your-subscription-guiid"
     func azure functionapp publish ranger-migration
     ```
 
