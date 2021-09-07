@@ -61,7 +61,7 @@ Local Prerequisites
     ```
     az login
     az account set --subscription "your-subscription-guiid"
-    func azure functionapp publish ranger-migration
+    func azure functionapp publish your-function-app-name
     ```
 
 4. Configure the following app settings
