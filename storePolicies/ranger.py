@@ -128,9 +128,9 @@ def get_ranger_conf():
     with open(conf_file_path) as json_file:
         data = json.load(json_file)
     if os.environ["rangerusername"]:
-        data["user_name"].append(os.environ["rangerusername"])
+        data["user_name"] = os.environ["rangerusername"]
     if os.environ["rangerpassword"]:
-        data["password"].append(os.environ["rangerpassword"])                 
+        data["password"] = os.environ["rangerpassword"]
     return data
 
 

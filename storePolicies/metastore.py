@@ -78,4 +78,4 @@ def get_ranger_policies_hive_dbs():
     return all_policies
 
 
-get_ranger_policies_hive_dbs()
+#get_ranger_policies_hive_dbs()

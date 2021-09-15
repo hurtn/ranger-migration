@@ -74,7 +74,10 @@ def storePolicies():
     #logging.info("Connection string: " + connxstr)
     #logging.info("Connection string: " + connxstr)
     cnxn = pyodbc.connect(connxstr)
-    samplefile=os.environ["samplefile"]
+    #if os.environ["samplefile"]:
+    #    samplefile=os.environ["samplefile"]
+    #else:
+    #    samplefile=""
     try:
             # configure database params
 

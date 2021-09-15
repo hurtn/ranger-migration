@@ -97,17 +97,27 @@ def getPolicyChanges():
             userentries = str(userslist).split(",")
             for userentry in userentries:
                 #logging.info("user: "+userentry.strip("['").strip("']").strip(' '))
-                spnid = getSPID(graphtoken,userentry.strip("['").strip("']").strip("'").strip(' '),'users')
-                if spnid is not None:
-                  spids['user'].append(spnid)
+                if userExclusionsList:
+                  userentry = removeexclusions(userentry.strip("['").strip("']").strip("'").strip(' '), userExclusionsList)
+                else:
+                  userentry = userentry.strip("['").strip("']").strip("'").strip(' ')
+                if userentry:                
+                    spnid = getSPID(graphtoken,userentry,'users')
+                    if spnid is not None:
+                        spids['user'].append(spnid)
 
         # iterate through the comma separate list of groups and set the dictionary object
         if groupslist is not None and len(groupslist)>0:
             groupentries = str(groupslist).split(",")
             for groupentry in groupentries:
-                spnid = getSPID(graphtoken,groupentry.strip("['").strip("']").strip("'").strip(' '),'groups')
-                if spnid is not None:
-                  spids['group'].append(spnid)
+                if groupExclusionsList:
+                  groupentry = removeexclusions(groupentry.strip("['").strip("']").strip("'").strip(' '), groupExclusionsList)
+                else:
+                  groupentry = groupentry.strip("['").strip("']").strip("'").strip(' ')
+                if groupentry:                
+                    spnid = getSPID(graphtoken,groupentry,'groups')
+                    if spnid is not None:
+                      spids['group'].append(spnid)
         return spids
    
     # utility functions to determine differences in lists
@@ -125,7 +135,32 @@ def getPolicyChanges():
         if len(list_1) != len(list_2):
             return False
         return sorted(list_1) == sorted(list_2)
-      
+
+    # Removes duplicate entities
+    def removeDups(vstring):
+    
+      def unique_list(l):
+          ulist = []
+          [ulist.append(x) for x in l if x not in ulist]
+          return ulist
+      if vstring:
+        unique=' '.join(unique_list(vstring.split()))
+        return unique
+      else:
+        return  ''    
+
+    def removeexclusions(vEntity,vExcludeEntities):
+      #exlusionlist = vExcludeEntities.split(',')
+      if vEntity:
+        for entity in vExcludeEntities:
+            logging.info("Exclusion list entity: "+ entity.lower())
+            if vEntity.lower() == entity.lower():
+                logging.info("!!! Principal " + vEntity.lower() + " found on exclusions list, therefore ignoring...")  
+                return None
+            else:
+                logging.info("Principal " + vEntity + " not found on exclusions list") 
+        return vEntity
+
     connxstr=os.environ["DatabaseConnxStr"]
     tenantid=os.environ["tenantID"]
     dbname = os.environ["dbname"]
@@ -133,6 +168,8 @@ def getPolicyChanges():
     spnid= os.environ["SPNID"]
     spnsecret= os.environ["SPNSecret"]
     basestorageuri = os.environ["basestorageendpoint"]
+    userExclusionsList = []
+    groupExclusionsList = []
     errorflag=0
 
     #logging.info("Connection string: " + connxstr)
@@ -154,6 +191,16 @@ def getPolicyChanges():
             cursor = cnxn.cursor()
             now =  datetime.datetime.utcnow()
             progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
+
+            # fetch exclusion list
+            sql_txt = "select * from " + dbname + "." + dbschema + ".principal_exclusions;"
+            cursor.execute(sql_txt)
+            row = cursor.fetchone()
+            while row:
+                if row[1] == 'U':
+                  userExclusionsList.append(str(row[2]))
+                if row[1] == 'G':
+                  groupExclusionsList.append(str(row[2]))   
             # note about the convert statements below, this is merely to convert the time value into the correct format for the fn_cdc_map_time_to_lsn function.
             # either there will be no data in the ctl table (first run) and then all changes are scanned. otherwise there is a last checkpoint found. if this matches the maximum lsn of the database then no changes have happened since the last run ie do nother. otherwise scan for changes...
             get_ct_info = "select convert(varchar(23),lsn_checkpoint,121) checkpointtime,convert(varchar(23),sys.fn_cdc_map_lsn_to_time(sys.fn_cdc_get_max_lsn()),121) maxlsntime from " + dbname + "." + dbschema + ".policy_ctl where id= (select max(id) from " + dbname + "." + dbschema + ".policy_ctl where application = '" + appname +"');"

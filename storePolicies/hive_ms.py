@@ -77,13 +77,13 @@ def database_quality_check(db_name, cursor):
 # HiveDBMetadata object
 def fetch_hive_dbs(ranger_hive_policies, servername):
     # Read in the configurations for metastore
-    logging.info("Reading the hive ms config")
-    ms_conf_dict = get_ms_conf()
-    logging.debug(ms_conf_dict)
+    #logging.info("Reading the hive ms config")
+    #ms_conf_dict = get_ms_conf()
+    #logging.debug(ms_conf_dict)
     #if servername:
-    #  pservername = servername
+      #pservername = servername
     #else:
-    pservername = ms_conf_dict["server"]
+      #pservername = ms_conf_dict["server"]
     # Use the metastore configs to connect to HDInsight Hive & get the cursor
     logging.info("Connecting to hive ms")
     #cursor = connect_hive(pservername, ms_conf_dict["port"], ms_conf_dict["database"],
