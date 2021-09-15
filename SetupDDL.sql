@@ -72,5 +72,15 @@ EXEC sys.sp_cdc_enable_db ;
  @source_name = 'ranger_policies',
  @role_name = 'null',
  @supports_net_changes = 1;
+ 
+-- Create exclusions table
+-- This table will store the principals to be excluded when ACLs are applied. Principal types include (U)sers and (G)roups
+create table principal_exclusions (
+    ID int  NOT NULL    IDENTITY    PRIMARY KEY,
+    principal_type NVARCHAR(1),
+    principal_identifier NVARCHAR(100),
+    date_entered datetime,
+    entered_by NVARCHAR(100));
+
 
 --revert

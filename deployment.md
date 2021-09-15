@@ -30,6 +30,7 @@ If the managed identity of the Function App is to be used throughout the solutio
 3. Enable managed identity of the function app if you are not using the service principal.
   https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity?tabs=dotnet#add-a-system-assigned-identity
 
+3.5 If you require private networking then at this point you may need to upgrade your storage account from gen1 to gen2. Click on the configuration blade and click the upgrade button. This will allow you to create private endpoints to the storage account for the function app running within the vnet.
 
 4. __SQL Managed Instance Database__ to store the Ranger policies and create a single database. 
 5. If you wish to use the managed identity of the Function App as a database user then:
@@ -54,11 +55,13 @@ If the managed identity of the Function App is to be used throughout the solutio
 Local Prerequisites
 
  * `func` cli version 3
- * `az` cli
+ * `az` cli - requires you to az login and then set the subscription e.g. az account set --subscription "your-subscription-guid"
  * `.NET Core SDK` version 3.1
 
     ```
-    func azure functionapp publish ranger-migration
+    az login
+    az account set --subscription "your-subscription-guiid"
+    func azure functionapp publish your-function-app-name
     ```
 
 4. Configure the following app settings
@@ -66,6 +69,7 @@ Local Prerequisites
 -  dbname: This is the name of the database created in step 3 above
 -  dbschema: Database schema, usually dbo
 -  hdiclusters: comma separated list of server names which will be used to extract the policies via the Ranger API. To this name "-int.azurehdinsight.net" is added to complete the endpoint details.
+-  basestorageendpoint: This is the filesystem endpoint of the target storage location e.g. https://[storage_accoount].dfs.core.windows.net/[container]
 -  HiveDatabaseConnxStr: This is the database connection string to the Hive metastore
 -  ScheduleStoreAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
