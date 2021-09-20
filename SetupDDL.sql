@@ -39,6 +39,21 @@ create table ranger_policies (
     checksum NVARCHAR(400),
     CONSTRAINT "PK_Policies" PRIMARY KEY CLUSTERED ("ID","RepositoryName") );
 
+-- Create policy transactions table
+-- This table stores the permissions to be set on ADLS
+-- The status represents whether the transaction can be ignored (for example where no valid principals were found), or whether it is pending, in progress or complete.
+create table policy_transactions (
+    ID int  NOT NULL    IDENTITY    PRIMARY KEY,
+    adl_path  NVARCHAR(4000),
+    acentry NVARCHAR(4000),
+    date_entered datetime,
+    trans_status nvarchar(20),
+    continuation_token nvarchar(100),
+    last_updated datetime,
+    all_principals_excluded nvarchar(1),
+    acl_count int
+);
+
 -- Create policy staging table
 -- this stores the latest copy of all policies from ranger prior to merging with the main table
 -- reason for this table is so that we can compare via the checksum column (a hash of all columns) 
