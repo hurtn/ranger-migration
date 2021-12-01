@@ -32,14 +32,16 @@ If the managed identity of the Function App is to be used throughout the solutio
 
 3.5 If you require private networking then at this point you may need to upgrade your storage account from gen1 to gen2. Click on the configuration blade and click the upgrade button. This will allow you to create private endpoints to the storage account for the function app running within the vnet.
 
-4. __SQL Managed Instance Database__ to store the Ranger policies and create a single database. 
-5. If you wish to use the managed identity of the Function App as a database user then:
-  - Ensure the SQL MI identity has read permissions on the AAD. See [the following documentation](https://docs.microsoft.com/en-gb/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#azure-ad-admin-with-a-server-in-sql-database)
-  - Set an AAD admin and login to the database
-  - Create the user and provide necessary permissions e.g.:
+4. __SQL Managed Instance Database__ to store the Ranger policies. Ideally use a seperate database to avoid conflicts.
+5. If you wish to use the managed identity of the Function App as a database user then there a few additional steps in italics to consider:
+  - *First ensure the SQL MI identity has read permissions on the AAD. See [the following documentation](https://docs.microsoft.com/en-gb/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#azure-ad-admin-with-a-server-in-sql-database)
+  - *Next, set an AAD admin. Please see [the following documentation](https://docs.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#provision-azure-ad-admin-sql-managed-instance)
+  - Create a new database and using a user with sysadmin permissions, enable CDC for the database. See [the following documentation](https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sys-sp-cdc-enable-db-transact-sql?view=sql-server-ver15)
+  - If necessary create a separate database user and provide the appropriate permissions.
+  - *Create the user and provide necessary permissions e.g.:
       - CREATE USER [Function App name] FROM EXTERNAL PROVIDER;
       - GRANT CONTROL ON DATABASE::[centricapolicydb] TO [Function App name];
-    Otherwise create a SQL user, provide permissions to the database and make a note of the user and password for later.
+   - Ensure the database is initialised using the initialise function application (see notes below) using this above user in the connection string details. This will ensure that CDC is enabled to the policy table for the correct user.
 
 6. Target __ADLS storage account__ where the ACLs will be applied (may exist already)
 7. Ranger and Hive services, usually deployed as part of __HDInsight__.
@@ -83,10 +85,7 @@ Local Prerequisites
     2. Follow step 4 in the infrastructure requirements above to grant permissions to the database
     3. To the target storage account, add the Storage Blob Data Owner or custom role (provied in this repository which denies blob data access) to the identity
 
-6.  Run the setup script setupddl.sql in this repository:
-    - Read the comments at the top of the script file. 
-    - If using the managed identity of the function app then login to the database with a priviledged account which has permissions to execute the script on behalf of the function app managed identity. Uncomment the "execute as" statement and enter the function app managed identity name to ensure that CDC is created for the user specified in the function app connection string  
-    - If using a SQL user, then login to the database and run the script.
+6.  __Database initialisation__. There is an initialise application which runs after each funcion app restart which will create all the tables and initialise CDC for the user specified in the connection string. If the tables exist this will simply catch the exceptions but will not drop any existing objects. 
 
 7. Secure Networking Configuration
 
