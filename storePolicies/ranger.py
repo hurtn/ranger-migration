@@ -26,12 +26,13 @@ import pathlib
 import os
 import requests
 from requests.auth import HTTPBasicAuth
+from collections import defaultdict
 
 
 # Ranger policy class
 class RangerPolicy:
     def __init__(self, policy_id, policy_name, repository_name, repository_type, perm_map_list, databases, is_enabled,
-                 is_recursive):
+                 is_recursive, tables, table_type):
         self.policy_id = policy_id
         self.policy_name = policy_name
         self.repository_name = repository_name
@@ -42,12 +43,15 @@ class RangerPolicy:
         self.is_recursive = is_recursive
         self.db_names = []
         self.paths = []
+        self.tables = tables
+        self.tbl_names =  defaultdict(str)
+        self.table_type = table_type
 
     def as_dict(self):
         return {'policy_id': self.policy_id, 'policy_name': self.policy_name, 'repository_name': self.repository_name,
                 'repository_type': self.repository_type, 'perm_map_list': self.perm_map_list,
                 'databases': self.databases, 'is_enabled': self.is_enabled, 'is_recursive': self.is_recursive,
-                'paths': self.paths, 'db_names': self.db_names}
+                'paths': self.paths, 'db_names': self.db_names, 'tables': self.tables, 'table_type': self.table_type, 'tbl_names': json.dumps(self.tbl_names)}
 
     @property
     def policy_id(self):
@@ -90,6 +94,22 @@ class RangerPolicy:
         self._perm_map_list = value
 
     @property
+    def tables(self):
+        return self._tables
+
+    @tables.setter
+    def tables(self, value):
+        self._tables = value
+
+    @property
+    def table_type(self):
+        return self._table_type
+
+    @table_type.setter
+    def table_type(self, value):
+        self._table_type = value
+                
+    @property
     def databases(self):
         return self._databases
 
@@ -118,6 +138,9 @@ class RangerPolicy:
 
     def set_hive_db_names(self, names):
         self.db_names.append(names)
+
+    def set_hive_tbl_names(self, tbl_name,tbl_path):
+        self.tbl_names[tbl_name]=tbl_path
 
 
 def get_ranger_conf():
@@ -152,6 +175,7 @@ def get_ranger_policies(servername):
     logging.debug("Fetching policies from ranger endpoint: " + endpoint)
     r = requests.get(endpoint, auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
     policies = r.json()
+    
     return policies
 
 
@@ -165,11 +189,11 @@ def fetch_ranger_hive_dbs(options,servername):
 
     all_ranger_hive_policies = []
     for policy in json_formatted_policies["vXPolicies"]:
-        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and '' != policy["databases"]:
+        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and ("tables" in policy) and '' != policy["databases"]:
             # Now we are all set to create the RangerPolicy object
             ranger_policy = RangerPolicy(policy["id"], policy["policyName"], policy["repositoryName"],
                                          policy["repositoryType"], policy["permMapList"], policy["databases"],
-                                         policy["isEnabled"], policy["isRecursive"])
+                                         policy["isEnabled"], policy["isRecursive"], policy["tables"], policy["tableType"])
             all_ranger_hive_policies.append(ranger_policy)
         else:
             logging.debug("Ignoring non hive policy: " + policy["policyName"] + ". Continuing...")

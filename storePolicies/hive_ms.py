@@ -91,9 +91,10 @@ def fetch_hive_dbs(ranger_hive_policies, servername):
     #logging.debug(cursor)
 
     # Go through the loop of Ranger Hive policies
-    hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
+    hiveconnxstr=    connxstr=os.environ["DatabaseConnxStr"]
+    #hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
     cnxn = pyodbc.connect(hiveconnxstr)
-    print("Connecting to hive " + hiveconnxstr)
+    #print("Connecting to hive " + hiveconnxstr)
     cursor = cnxn.cursor()
     for json_policy in ranger_hive_policies:
         db_names = json_policy.databases
@@ -119,6 +120,50 @@ def fetch_hive_dbs(ranger_hive_policies, servername):
                        json_policy.set_hive_db_names(new_db_name)
                     else:
                        logging.warn("Hive database "+new_db_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
+
+                    # If table specific exclusions apply then fetch all tables and locations for the current database
+                    if json_policy.table_type == "Exclusion" and json_policy.tables != "*": 
+                        #obtain all tables+paths for the database so that we can exclude the tables+paths specified in the exclusion
+                        sqltext = "select t.tbl_name, sds.location from DBS d inner join tbls t on d.DB_ID = t.DB_ID  inner join sds on sds.sd_id = t.sd_id where d.name ='" + new_db_name + "'"
+                        cursor.execute(sqltext)
+                        row = cursor.fetchone()
+                        while row:
+                            json_policy.set_hive_tbl_names(row[0],row[1])
+                            row = cursor.fetchone()
+                except pyodbc.DatabaseError as err:
+                            cnxn.commit()
+                            sqlstate = err.args[1]
+                            sqlstate = sqlstate.split(".")
+                            logging.error('Error occured while fetching policy details using sql '+sqltext+'. Rollback. Error message: '.join(sqlstate))
                 except:
                     logging.info("Exception while handling policy: " + str(json_policy.policy_name))
                     continue
+    
+        """#if json_policy.table_type == 'Exclusion':
+        print("Table type = "+json_policy.table_type)
+        if json_policy.tables=="*":
+            logging.info("No specific table exclusions/inclusions found")
+        elif json_policy.table_type == "Exclusion" and json_policy.tables != "*":
+            logging.info("Table exclusions/inclusions found. Determining location")
+            for table_name in json_policy.tables.split(","):
+                try:
+                    print('Obtaining path for '+table_name)
+                    sqltext = "select location from dbo.tbls inner join sds on sds.sd_id = tbls.sd_id where tbl_name ='" + table_name + "'"
+                    cursor.execute(sqltext)
+
+                    #cursor.execute("DESCRIBE DATABASE EXTENDED " + new_db_name)
+                    tbl_details = cursor.fetchone()
+
+                    if tbl_details:
+                        logging.info('Found Hive database '+table_name+' is located at ' +str(tbl_details[0]) ) 
+                        json_policy.set_hive_tbl_paths(str(tbl_details[0]))
+                        json_policy.set_hive_tbl_names(table_name)
+                    else:
+                        logging.warn("Hive database "+table_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
+                except:
+                    logging.info("Exception while handling policy: " + str(json_policy.policy_name))
+                    continue
+        else:
+            logging.info("Policy includes specific table inclusions or unknown configuratoin therefore ignoring the inclusion/exclusions section...")"""
+
+

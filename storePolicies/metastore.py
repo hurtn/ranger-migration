@@ -37,13 +37,6 @@ def parse_args():
     return options
 
 
-# This is the main orchestrator function for this project. See documentation on Git for help on how to
-# use this code. The flow is pretty straight fwd:
-#   1. Parse user input
-#   2. Read the Metastore & Ranger configuration
-#   3. Store the policies in a SQL DB - append, update or delete based on the current Ranger policies
-#   4. Via CDC, look for changes that have happened in the last iteration
-#   5. Apply the storage ACLs as appropriate.
 def get_ranger_policies_hive_dbs():
     """
 

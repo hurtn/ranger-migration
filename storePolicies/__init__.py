@@ -45,25 +45,6 @@ def main(mytimer: func.TimerRequest) -> None:
         logging.info('The timer is past due!')
 
     logging.info('Python timer trigger function ran at %s', utc_timestamp)
-    #jdk.install('11', jre=True)
-
-    #opts = hive.HiveHelperOptions(
-    #host="ar47-spark-esp-int.azurehdinsight.net",
-    #port='443',
-    #user='john.doe@ajithramanathoutlook.onmicrosoft.com',
-    #password='Plok09ij',
-    #hive_jar='./storePolicies/hive-jdbc-3.1.0.3.1.4.65-3-standalone.jar',
-    #schema='transportMode=http;ssl=true;httpPath=/hive2',
-    #)
-
-    #h = hive.HiveHelper(database='default', opts=opts)
-    #logging.info('Attempting to connect to hive')
-    #h.connect()
-
-    #tables = h.get_tables()
-    
-    #for t in tables:
-    #    logging.info(t)
   
     storePolicies()
 
@@ -72,15 +53,23 @@ def storePolicies():
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
     #logging.info("Connection string: " + connxstr)
-    #logging.info("Connection string: " + connxstr)
     cnxn = pyodbc.connect(connxstr)
     #if os.environ["samplefile"]:
     #    samplefile=os.environ["samplefile"]
     #else:
     #    samplefile=""
     try:
-            # configure database params
 
+            hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
+            logging.info("Hive Conn: "+hiveconnxstr)
+            hiveparams = urllib.parse.quote_plus(hiveconnxstr)
+            hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)
+            hive_engine = create_engine(hive_conn_str,echo=False).connect()
+            hivedbsdf = pd.read_sql_query('select * from dbo.dbs', hive_engine)
+            hivetblsdf = pd.read_sql_query('select * from dbo.tbls', hive_engine)
+            hivesdsdf = pd.read_sql_query('select * from dbo.sds', hive_engine)
+            #logging.info("Output hive dbs table:")
+            #logging.info(tabulate(hivedf, headers='keys', tablefmt='presto'))
 
             stagingtablenm = "ranger_policies_staging"
             targettablenm = "ranger_policies"
@@ -98,7 +87,7 @@ def storePolicies():
 
             conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(params)
             engine = create_engine(conn_str,echo=False)
-
+    
             # sql alchemy listener
             @event.listens_for(engine, "before_cursor_execute")
             def receive_before_cursor_execute(
@@ -107,14 +96,25 @@ def storePolicies():
                     if executemany:
                         cursor.fast_executemany = True
 
-            
+            # loading hive tables
+            logging.info("Loading hive DBS table into target")
+            hivedbsdf.to_sql("dbs",engine,index=False,if_exists="replace")
+            hivetblsdf.to_sql("tbls",engine,index=False,if_exists="replace")
+            hivesdsdf.to_sql("sds",engine,index=False,if_exists="replace")
+            #comment these three lines if you are not using local testing with the sample spreadsheet
+            #samplefile = "NHPolicySample.csv"
+            #pd.options.mode.chained_assignment = None  # default='warn'
             #for csvpolicies in pd.read_csv(samplefile, chunksize=batchsize,names=collist):
-              #hdfspolicies = csvpolicies[(csvpolicies['Service Type']=='hdfs')]
-              #logging.info(hdfspolicies.head())
-              #hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
+              #allpolicies = csvpolicies[(csvpolicies['Service Type']=='hive')]
+              ##for value in allpolicies.Resources():
+              #allpolicies['paths'] = allpolicies['Resources']
+              ##print(allpolicies.head())
+              ##hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
             
+            #comment these two lines if you are running locally with the spreadsheet input and no hive / ranger deployment to poll
             hivepolicies = getRangerPolicies()
             allpolicies = hivepolicies #.append(hdfspolicies)
+            
             allpolicies = allpolicies.astype(str)
             allpolicies = allpolicies.applymap(lambda x: x.strip() if isinstance(x, str) else x) #remove any unwanted spaces 
             allpolicies = allpolicies.applymap(lambda x: None if x=='nan' else x) #convert any nan strings to null
@@ -122,6 +122,7 @@ def storePolicies():
             #logging.info(allpolicies.head())
             #logging.info(allpolicies.info())
             logging.info(tabulate(allpolicies, headers='keys', tablefmt='presto'))
+            # this to_sql method is a SQL alchemy method to fast load bulk data from a pandas dataframe into the staging table. Column names need to match up for the correct mapping.
             allpolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
             
 
@@ -133,14 +134,14 @@ def storePolicies():
             ## set the checksum on each record so we can use this to determine whether the record changed
             cnxn = pyodbc.connect(connxstr)
             cursor = cnxn.cursor()
-            updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set [checksum] =  HASHBYTES('SHA1',  (select id,Name,RepositoryName,Resources,permMapList,[Service Type],Status,[paths],databases,db_names for xml raw)) "
+            updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set [checksum] =  HASHBYTES('SHA1',  (select id,Name,RepositoryName,Resources,permMapList,[Service Type],Status,[paths],databases,db_names,tables,table_type,table_names for xml raw)) "
             logging.info("Updating checksum: "+ updatesql)
             cursor.execute(updatesql)
             cnxn.commit()
 
             rowcount = -1
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
-            USING (select id,Name,RepositoryName,Resources,[Service Type],Status,[checksum],permMapList,paths,databases,db_names from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
+            USING (select id,Name, RepositoryName,Resources,[Service Type],Status,[checksum],permMapList,paths,databases,db_names,tables,table_type,table_names from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
             ) AS Source
             ON (Target.[id] = Source.[id] and Target.[RepositoryName]=Source.[RepositoryName])
             WHEN MATCHED AND Target.[checksum] <> source.[checksum] THEN
@@ -151,8 +152,11 @@ def storePolicies():
                         , Target.[paths] = Source.[paths]
                         , Target.[databases] = Source.[databases]
                         , Target.[db_names] = Source.[db_names]
+                        , Target.[tables] = Source.[tables]
+                        , Target.[table_type] = Source.[table_type]
+                        , Target.[table_names] = Source.[table_names]
             WHEN NOT MATCHED BY TARGET THEN
-                INSERT ([id],[Name], [RepositoryName], [Resources],[Service Type],[Status],[checksum],[permMapList],[paths],[databases],db_names)
+                INSERT ([id],[Name], [RepositoryName], [Resources],[Service Type],[Status],[checksum],[permMapList],[paths],[databases],db_names,tables,table_type,table_names)
                 VALUES (
                 Source.[ID]
                 , Source.[Name]
@@ -165,6 +169,9 @@ def storePolicies():
                 , Source.[paths]
                 , Source.[databases]
                 , Source.[db_names]
+                , Source.[tables]
+                , Source.[table_type]
+                , Source.[table_names]
                 )
             WHEN NOT MATCHED BY SOURCE
                 THEN DELETE; """
@@ -172,21 +179,72 @@ def storePolicies():
             rowcount = cursor.execute(mergesql).rowcount
             cnxn.commit()
             logging.info(str(rowcount) + " rows merged into target policy table")
+            
+            #if samplefile:
+            #    localdevsql  = """update ranger_policies set paths = concat('abfs://ar12-spark-esp-2021-09-02t10-13-26-963z@hdiprimaryranger.dfs.core.windows.net/datalake/dimensions',replace(replace(resources,'path=[',''),']',''))"""
+            #    rowcount = cursor.execute(localdevsql).rowcount
+            #    cnxn.commit()
+            #    logging.info(str(rowcount) + " paths updated in policies table")
+
+            clearsnapshot  = """truncate table policy_snapshot_by_path"""
+            cursor.execute(clearsnapshot)
+            cnxn.commit()
+            snapshotsql = """insert into policy_snapshot_by_path (ID, RepositoryName,adl_path,permMapList,principal,permission)
+                             select distinct id, repositoryname,  trim(paths) adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
+                             cross apply openjson(jsondata.value, '$.userList') as userdata
+                             cross apply openjson(jsondata.value,'$.permList') as permdata
+                             where userdata.value is not null and table_type != 'Exclusion'
+                             and status = 'True'
+                             UNION
+                             select distinct id, repositoryname,  trim(paths) adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
+                             cross apply openjson(jsondata.value, '$.groupList') as groupdata
+                             cross apply openjson(jsondata.value,'$.permList') as permdata
+                             where groupdata.value is not null and table_type != 'Exclusion'
+                             and status = 'True'
+                             UNION
+                             select distinct id, repositoryname,  trim(tbldata.value) adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
+                             cross apply openjson(jsondata.value, '$.userList') as userdata
+                             cross apply openjson(jsondata.value,'$.permList') as permdata
+                             cross apply openjson (Tab.table_names) as tbldata 
+                             where userdata.value is not null and table_type = 'Exclusion'
+                             and status = 'True'
+                             and tables COLLATE DATABASE_DEFAULT !=  tbldata.[key] COLLATE DATABASE_DEFAULT
+                             UNION
+                             select distinct id, repositoryname,  trim(tbldata.value) adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
+                             cross apply openjson(jsondata.value, '$.groupList') as groupdata
+                             cross apply openjson(jsondata.value,'$.permList') as permdata
+                             cross apply openjson (Tab.table_names) as tbldata 
+                             where groupdata.value is not null and table_type = 'Exclusion'
+                             and status = 'True'
+                             and tables COLLATE DATABASE_DEFAULT !=  tbldata.[key] COLLATE DATABASE_DEFAULT
+                             """
+                             # first insert where type is not exclusion and tables == *
+                             #second insert where type is exclusion and tables != * joined to db_table lookup table excluded the ones in the exclusion list
+
+            rowcount = cursor.execute(snapshotsql).rowcount
+            cnxn.commit()
+            print(str(rowcount) + " rows saved to snapshot table")
+
+
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
             sqlstate = err.args[1]
             sqlstate = sqlstate.split(".")
-            logging.error('Error occured while processing file. Rollback. Error message: '.join(sqlstate))
+            logging.error('Error occured while storing ranger policies. Rollback. Error message: '.join(sqlstate))
     else:
             cnxn.commit()
-            logging.info('Successfully processed file!')
+            logging.info('Successfully stored ranger policies')
     finally:
             cnxn.autocommit = True
 
 def getRangerPolicies():
-    rangercollist = ['policy_id','policy_name','repository_name','repository_type','perm_map_list','databases','is_enabled','is_recursive','paths','db_names']
-    tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names']
+    rangercollist = ['policy_id','policy_name','repository_name','repository_type','perm_map_list','databases','is_enabled','is_recursive','paths','db_names','tables','table_type','tbl_names']
+    tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
     #rangerpolicies = pd.read_csv(r"sampledataframe.csv",names=rangercollist)
     rangerpolicies = metastore.get_ranger_policies_hive_dbs()
     logging.info(rangerpolicies.to_string())
