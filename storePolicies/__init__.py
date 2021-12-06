@@ -25,6 +25,7 @@ import datetime
 import logging
 import urllib
 import pyodbc
+import pymysql
 import pandas as pd
 import pandas.io.common
 from sqlalchemy import create_engine
@@ -63,11 +64,13 @@ def storePolicies():
             hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
             logging.info("Hive Conn: "+hiveconnxstr)
             hiveparams = urllib.parse.quote_plus(hiveconnxstr)
-            hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)
+            #hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)
+            hive_conn_str = 'mysql+pymysql://root:password@13.87.94.109:3906/metastore?charset=utf8mb4' #?odbc_connect={}'.format(params)
+
             hive_engine = create_engine(hive_conn_str,echo=False).connect()
-            hivedbsdf = pd.read_sql_query('select * from dbo.dbs', hive_engine)
-            hivetblsdf = pd.read_sql_query('select * from dbo.tbls', hive_engine)
-            hivesdsdf = pd.read_sql_query('select * from dbo.sds', hive_engine)
+            hivedbsdf = pd.read_sql_query('select * from dbs', hive_engine)
+            hivetblsdf = pd.read_sql_query('select * from tbls', hive_engine)
+            hivesdsdf = pd.read_sql_query('select * from sds', hive_engine)
             #logging.info("Output hive dbs table:")
             #logging.info(tabulate(hivedf, headers='keys', tablefmt='presto'))
 
@@ -143,7 +146,7 @@ def storePolicies():
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
             USING (select id,Name, RepositoryName,Resources,[Service Type],Status,[checksum],permMapList,paths,databases,db_names,tables,table_type,table_names from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
             ) AS Source
-            ON (Target.[id] = Source.[id] and Target.[RepositoryName]=Source.[RepositoryName])
+            ON (Target.[id] = Source.[id] and Target.[RepositoryName]=Source.[RepositoryName] and databases!='information_schema' and paths !='' and Source.[Name] not like 'all - %' and Source.[Name] not like 'default%')
             WHEN MATCHED AND Target.[checksum] <> source.[checksum] THEN
                 UPDATE SET Target.[resources] = Source.[resources]
                         , Target.[Status] = Source.[Status]
@@ -186,25 +189,30 @@ def storePolicies():
             #    cnxn.commit()
             #    logging.info(str(rowcount) + " paths updated in policies table")
 
+            #select trim(value) from [dbo].[policy_snapshot_by_path] cross apply
+            # STRING_SPLIT(replace(replace(replace(adl_path,'[',''),']',''),'''',''),',')
+
             clearsnapshot  = """truncate table policy_snapshot_by_path"""
             cursor.execute(clearsnapshot)
             cnxn.commit()
             snapshotsql = """insert into policy_snapshot_by_path (ID, RepositoryName,adl_path,permMapList,principal,permission)
-                             select distinct id, repositoryname,  trim(paths) adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
+                             cross apply STRING_SPLIT(replace(replace(replace(paths,'[',''),']',''),'''',''),',') as pathdata
                              where userdata.value is not null and table_type != 'Exclusion'
-                             and status = 'True'
+                             and status = 'True' and ID = 6
                              UNION
-                             select distinct id, repositoryname,  trim(paths) adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
+                             cross apply STRING_SPLIT(replace(replace(replace(paths,'[',''),']',''),'''',''),',') as pathdata
                              where groupdata.value is not null and table_type != 'Exclusion'
                              and status = 'True'
                              UNION
-                             select distinct id, repositoryname,  trim(tbldata.value) adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -213,7 +221,7 @@ def storePolicies():
                              and status = 'True'
                              and tables COLLATE DATABASE_DEFAULT !=  tbldata.[key] COLLATE DATABASE_DEFAULT
                              UNION
-                             select distinct id, repositoryname,  trim(tbldata.value) adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
