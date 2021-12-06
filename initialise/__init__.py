@@ -44,7 +44,7 @@ def initialise():
     connxstr=os.environ["DatabaseConnxStr"]
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
-    #logging.info("Connection string: " + connxstr)
+    logging.info("Connection string: " + connxstr)
     cnxn = pyodbc.connect(connxstr)
 
     stagingtablenm = "ranger_policies_staging"
@@ -85,18 +85,18 @@ def initialise():
             ID int,
             Name NVARCHAR(100),
             RepositoryName NVARCHAR(2000),   
-            Resources  NVARCHAR(2000),
-            paths  NVARCHAR(4000),
-            permMapList nvarchar(4000),
-            Databases nvarchar(4000),
-            DB_Names nvarchar(4000),
+            Resources  NVARCHAR(max),
+            paths  NVARCHAR(max),
+            permMapList nvarchar(max),
+            Databases nvarchar(max),
+            DB_Names nvarchar(max),
             isRecursive nvarchar(200),
             [Service Type]  NVARCHAR(100),
             Status  NVARCHAR(100),
             checksum NVARCHAR(400),
-            tables NVARCHAR(4000),
+            tables NVARCHAR(max),
             table_type NVARCHAR(100),
-            table_names  NVARCHAR(4000),
+            table_names  NVARCHAR(max),
             CONSTRAINT "PK_Policies" PRIMARY KEY CLUSTERED ("ID","RepositoryName") );
         """
         cursor.execute(initsql)
@@ -116,7 +116,7 @@ def initialise():
     #        Policy_ID int,
     #        RepositoryName NVARCHAR(2000),               
     #        Table_Name NVARCHAR(100),
-    #        Path  NVARCHAR(4000),
+    #        Path  NVARCHAR(max),
     #        CONSTRAINT "PK_Policy_db_tables" PRIMARY KEY CLUSTERED ("Policy_ID","RepositoryName","Table_Name") );
     #    """
     #    cursor.execute(initsql)
@@ -138,24 +138,24 @@ def initialise():
         create table policy_transactions (
             ID int  NOT NULL    IDENTITY    PRIMARY KEY,
             policy_id int not null,
-            storage_url nvarchar(4000),
-            adl_path  NVARCHAR(4000),
+            storage_url nvarchar(max),
+            adl_path  NVARCHAR(max),
             trans_type int,
             trans_action NVARCHAR(200),
             trans_mode NVARCHAR(200),
-            acentry NVARCHAR(4000),
+            acentry NVARCHAR(max),
             date_entered datetime,
             trans_status nvarchar(20),
-            trans_reason nvarchar(4000),
-            continuation_token nvarchar(4000),
+            trans_reason nvarchar(max),
+            continuation_token nvarchar(max),
             last_updated datetime,
             all_principals_excluded nvarchar(1),
-            principals_excluded nvarchar(4000),
-            exclusion_list nvarchar(4000),
-            principals_included nvarchar(4000),
+            principals_excluded nvarchar(max),
+            exclusion_list nvarchar(max),
+            principals_included nvarchar(max),
             acl_count int,
             adl_permission_str nvarchar(3),
-            permission_json nvarchar(4000),
+            permission_json nvarchar(max),
             depends_on int
         )
         """
@@ -176,10 +176,10 @@ def initialise():
             create table policy_snapshot_by_path (
                 ID int NOT NULL,    
                 RepositoryName NVARCHAR(200),   
-                adl_path  NVARCHAR(4000),
-                permMapList nvarchar(4000),
-                principal  nvarchar(4000),
-                permission nvarchar(4000),
+                adl_path  NVARCHAR(max),
+                permMapList nvarchar(max),
+                principal  nvarchar(max),
+                permission nvarchar(max),
                 audit_status  NVARCHAR(100),
                 audit_date datetime)
             """
@@ -205,18 +205,18 @@ def initialise():
             ID int,
             Name NVARCHAR(100),
             RepositoryName NVARCHAR(2000),   
-            Resources  NVARCHAR(2000),
-            Paths  NVARCHAR(2000),
-            Databases nvarchar(4000),
-            DB_Names nvarchar(4000),
+            Resources  NVARCHAR(max),
+            Paths  NVARCHAR(max),
+            Databases nvarchar(max),
+            DB_Names nvarchar(max),
             isRecursive nvarchar(200),
-            permMapList nvarchar(4000),
+            permMapList nvarchar(max),
             [Service Type]  NVARCHAR(100),
             Status  NVARCHAR(100),
             checksum NVARCHAR(400),
-            tables NVARCHAR(4000),
+            tables NVARCHAR(max),
             table_type NVARCHAR(100),
-            table_names  NVARCHAR(4000),
+            table_names  NVARCHAR(max),
             CONSTRAINT "PK_Policies_Staging" PRIMARY KEY CLUSTERED ("ID","RepositoryName")  )
         """
         cursor.execute(initsql)
@@ -252,10 +252,10 @@ def initialise():
     # This table will store the principals to be excluded when ACLs are applied. Principal types include (U)sers and (G)roups
     try:
         initsql = """
-        create table principal_exclusions (
+        create table exclusions (
             ID int  NOT NULL    IDENTITY    PRIMARY KEY,
-            principal_type NVARCHAR(1),
-            principal_identifier NVARCHAR(100),
+            type NVARCHAR(1),
+            identifier NVARCHAR(100),
             date_entered datetime,
             entered_by NVARCHAR(100));
 
@@ -271,7 +271,7 @@ def initialise():
 
     logging.info('Initialise script complete')
 
-#initialise()
+initialise()
 
 
 
