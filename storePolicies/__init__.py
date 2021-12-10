@@ -53,21 +53,17 @@ def storePolicies():
     connxstr=os.environ["DatabaseConnxStr"]
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
-    #logging.info("Connection string: " + connxstr)
     cnxn = pyodbc.connect(connxstr)
-    #if os.environ["samplefile"]:
-    #    samplefile=os.environ["samplefile"]
-    #else:
-    #    samplefile=""
+
     try:
 
             hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
-            logging.info("Hive Conn: "+hiveconnxstr)
             hiveparams = urllib.parse.quote_plus(hiveconnxstr)
-            #hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)
-            hive_conn_str = 'mysql+pymysql://root:password@13.87.94.109:3906/metastore?charset=utf8mb4' #?odbc_connect={}'.format(params)
-
+            #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
+            hive_conn_str = 'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
             hive_engine = create_engine(hive_conn_str,echo=False).connect()
+            # we keep a "local" copy of all hive tables and refresh them every time this app runs
+            # read all required Hive tables into dataframe so  we can store in working database
             hivedbsdf = pd.read_sql_query('select * from dbs', hive_engine)
             hivetblsdf = pd.read_sql_query('select * from tbls', hive_engine)
             hivesdsdf = pd.read_sql_query('select * from sds', hive_engine)
@@ -84,7 +80,7 @@ def storePolicies():
             
             cursor = cnxn.cursor()
             truncsql = "TRUNCATE table " + dbname + "." + dbschema + "." + stagingtablenm  
-            logging.info("Truncating staging table: "+(truncsql))
+            #logging.info("Truncating staging table: "+(truncsql))
             cursor.execute(truncsql)
             cnxn.commit()
 
@@ -100,11 +96,12 @@ def storePolicies():
                         cursor.fast_executemany = True
 
             # loading hive tables
-            logging.info("Loading hive DBS table into target")
+            logging.info("storePolicies: Loading a copy of Hive tables into working database")
             hivedbsdf.to_sql("dbs",engine,index=False,if_exists="replace")
             hivetblsdf.to_sql("tbls",engine,index=False,if_exists="replace")
             hivesdsdf.to_sql("sds",engine,index=False,if_exists="replace")
-            #comment these three lines if you are not using local testing with the sample spreadsheet
+
+            #comment these lines if you are not using local testing i.e. running in Azure Function app with the sample spreadsheet
             #samplefile = "NHPolicySample.csv"
             #pd.options.mode.chained_assignment = None  # default='warn'
             #for csvpolicies in pd.read_csv(samplefile, chunksize=batchsize,names=collist):
@@ -122,10 +119,10 @@ def storePolicies():
             allpolicies = allpolicies.applymap(lambda x: x.strip() if isinstance(x, str) else x) #remove any unwanted spaces 
             allpolicies = allpolicies.applymap(lambda x: None if x=='nan' else x) #convert any nan strings to null
             allpolicies.replace({'\'': '"'}, regex=True)
-            #logging.info(allpolicies.head())
-            #logging.info(allpolicies.info())
-            logging.info(tabulate(allpolicies, headers='keys', tablefmt='presto'))
-            # this to_sql method is a SQL alchemy method to fast load bulk data from a pandas dataframe into the staging table. Column names need to match up for the correct mapping.
+            # uncomment this next line if you want to see the output of the policies in formatted results
+            #logging.info(tabulate(allpolicies, headers='keys', tablefmt='presto'))
+
+            # This to_sql method is a SQL alchemy method to fast load bulk data from a pandas dataframe into the staging table. Column names need to match up for the correct mapping.
             allpolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
             
 
@@ -138,15 +135,15 @@ def storePolicies():
             cnxn = pyodbc.connect(connxstr)
             cursor = cnxn.cursor()
             updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set [checksum] =  HASHBYTES('SHA1',  (select id,Name,RepositoryName,Resources,permMapList,[Service Type],Status,[paths],databases,db_names,tables,table_type,table_names for xml raw)) "
-            logging.info("Updating checksum: "+ updatesql)
+            #logging.info("Updating checksum: "+ updatesql)
             cursor.execute(updatesql)
             cnxn.commit()
 
             rowcount = -1
             mergesql = """MERGE """ + dbname + """.""" + dbschema + """.""" + targettablenm  + """ AS Target
             USING (select id,Name, RepositoryName,Resources,[Service Type],Status,[checksum],permMapList,paths,databases,db_names,tables,table_type,table_names from  """ + dbname + """.""" + dbschema + """.""" + stagingtablenm  + """
-            ) AS Source
-            ON (Target.[id] = Source.[id] and Target.[RepositoryName]=Source.[RepositoryName] and databases!='information_schema' and paths !='' and Source.[Name] not like 'all - %' and Source.[Name] not like 'default%')
+             where [databases]!='information_schema' and [paths] !='' and [Name] not in (select identifier from  """ + dbname + """.""" + dbschema + """.exclusions where type = 'P')) AS Source
+            ON (Target.[id] = Source.[id] and Target.[RepositoryName]=Source.[RepositoryName])
             WHEN MATCHED AND Target.[checksum] <> source.[checksum] THEN
                 UPDATE SET Target.[resources] = Source.[resources]
                         , Target.[Status] = Source.[Status]
@@ -196,15 +193,15 @@ def storePolicies():
             cursor.execute(clearsnapshot)
             cnxn.commit()
             snapshotsql = """insert into policy_snapshot_by_path (ID, RepositoryName,adl_path,permMapList,principal,permission)
-                             select distinct id, repositoryname,  replace(replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
                              cross apply STRING_SPLIT(replace(replace(replace(paths,'[',''),']',''),'''',''),',') as pathdata
                              where userdata.value is not null and table_type != 'Exclusion'
-                             and status = 'True' and ID = 6
+                             and status = 'True'
                              UNION
-                             select distinct id, repositoryname,  replace(replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -212,7 +209,7 @@ def storePolicies():
                              where groupdata.value is not null and table_type != 'Exclusion'
                              and status = 'True'
                              UNION
-                             select distinct id, repositoryname,  replace(replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/') adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -221,7 +218,7 @@ def storePolicies():
                              and status = 'True'
                              and tables COLLATE DATABASE_DEFAULT !=  tbldata.[key] COLLATE DATABASE_DEFAULT
                              UNION
-                             select distinct id, repositoryname,  replace(replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/'),'.db','')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname, replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -253,21 +250,13 @@ def storePolicies():
 def getRangerPolicies():
     rangercollist = ['policy_id','policy_name','repository_name','repository_type','perm_map_list','databases','is_enabled','is_recursive','paths','db_names','tables','table_type','tbl_names']
     tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
-    #rangerpolicies = pd.read_csv(r"sampledataframe.csv",names=rangercollist)
+
     rangerpolicies = metastore.get_ranger_policies_hive_dbs()
-    logging.info(rangerpolicies.to_string())
-    #hivepolicies = getRangerPolicies()
-    #logging.info(hivepolicies.to_string())
+    #logging.info(rangerpolicies.to_string())
+
     rangerpolicies.columns = tgtcollist
-    logging.info(rangerpolicies.head())
+    #logging.info(rangerpolicies.head())
     return rangerpolicies
-    #for rangerpolicies in pd.read_csv(r"sampledataframe.csv", chunksize=200,names=rangercollist,header=0):
-      #logging.info(rangerpolicies.head())
-      #rangerpolicies.columns = tgtcollist
-      #logging.info(rangerpolicies.head())
-      # assign a source name is necessary
-      #newdf = rangerpolicies.assign(RepositoryName='ranger1') 
-      #return rangerpolicies
 
 #storePolicies()
 #getRangerPolicies()

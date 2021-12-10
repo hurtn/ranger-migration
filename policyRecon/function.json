@@ -5,7 +5,7 @@
       "name": "mytimer",
       "type": "timerTrigger",
       "direction": "in",
-      "schedule": "%ScheduleApplyAppSetting%"
+      "schedule": "%ScheduleReconAppSetting%"
     },
     {
       "type": "queue",

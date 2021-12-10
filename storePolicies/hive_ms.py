@@ -25,8 +25,6 @@ import logging
 import pathlib
 import pyodbc
 import os
-#import jaydebeapi
-# from security.keyvault import get_ms_credentials
 
 
 # Gets the Hive metastore configurations set in the conf/metastore_conf.json file.
@@ -40,17 +38,6 @@ def get_ms_conf():
 
     return data
 
-
-# Connect to the Hive instance
-#def connect_hive(server, port, database, user_name, password):
-    # Construct the JDBC connection string
-    #url = ("jdbc:hive2://" + server + ":" + str(port) + "/" + database +
-           #";transportMode=http;ssl=true;httpPath=/hive2")
-    # Connect to Hive
-    #conn = jaydebeapi.connect("org.apache.hive.jdbc.HiveDriver", url, [user_name, password],"./dependencies/hive-jdbc-3.1.0.3.1.4.65-3-standalone.jar")
-    #return conn.cursor()
-
-
 def database_quality_check(db_name, cursor):
     all_dbs = []
     # db_name param could be a csv string. So, go around the loop to account for this
@@ -58,15 +45,12 @@ def database_quality_check(db_name, cursor):
     for db in split_db_names:
         # For each db, now account for presence of wild chars like '*'
         if db.endswith("*"):
-            #cursor.execute('SHOW DATABASES LIKE "' + db + '"')
             sqltext = "select name from dbo.dbs where name like '" + db.rstrip('*') + "%'"
-            #print("***************sql text " + sqltext)
             cursor.execute(sqltext)
             show_db = cursor.fetchall()
-            #print("*************** results from hive **** " + str(show_db))
             if show_db:
                 for d in show_db:
-                    logging.info("Database="+d[0])
+                    #logging.info("Database="+d[0])
                     all_dbs.append(d[0])
         else:
             all_dbs.append(db)
@@ -74,52 +58,37 @@ def database_quality_check(db_name, cursor):
 
 
 # Fetches the Hive DB metadata from Hive MS for the databases in the Ranger policies & puts the same into the
-# HiveDBMetadata object
-def fetch_hive_dbs(ranger_hive_policies, servername):
-    # Read in the configurations for metastore
-    #logging.info("Reading the hive ms config")
-    #ms_conf_dict = get_ms_conf()
-    #logging.debug(ms_conf_dict)
-    #if servername:
-      #pservername = servername
-    #else:
-      #pservername = ms_conf_dict["server"]
-    # Use the metastore configs to connect to HDInsight Hive & get the cursor
-    logging.info("Connecting to hive ms")
-    #cursor = connect_hive(pservername, ms_conf_dict["port"], ms_conf_dict["database"],
-                          #ms_conf_dict["user_name"], ms_conf_dict["password"])
-    #logging.debug(cursor)
 
-    # Go through the loop of Ranger Hive policies
-    hiveconnxstr=    connxstr=os.environ["DatabaseConnxStr"]
-    #hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
+def fetch_hive_dbs(ranger_hive_policies, servername):
+    # Go through the loop of Hive databases and tables from the "local" data copy
+    hiveconnxstr= os.environ["DatabaseConnxStr"]
+
     cnxn = pyodbc.connect(hiveconnxstr)
-    #print("Connecting to hive " + hiveconnxstr)
+
     cursor = cnxn.cursor()
     for json_policy in ranger_hive_policies:
+        logging.info("Lookup Hive metadata for policy ID "+ str(json_policy.policy_id))
         db_names = json_policy.databases
         # Perform some quality checks on the resource
         new_db_names = database_quality_check(db_names, cursor)
         if not new_db_names:
             # We'll log this and move on
-            logging.info("Database quality check failed. Proceeding to the next policy.")
+            logging.warn("Database quality check failed. Proceeding to the next policy.")
             continue
         else:
             for new_db_name in new_db_names:
+                logging.info("POlicy ID "+ str(json_policy.policy_id) + " for db " + new_db_name)
                 try:
-                    logging.info("Fetching details of hive database: " + new_db_name)
+                    #logging.info("Fetching details of hive database: " + new_db_name)
                     sqltext = "select db_location_uri from dbo.dbs where name ='" + new_db_name + "'"
                     cursor.execute(sqltext)
- 
-                    #cursor.execute("DESCRIBE DATABASE EXTENDED " + new_db_name)
                     db_details = cursor.fetchone()
- 
                     if db_details:
-                       logging.info('Found Hive database '+new_db_name+' is located at ' +str(db_details[0]) ) 
+                       logging.info('hive_ms.py.fetch_hive_dbs(): Found Hive database '+new_db_name+' is located at ' +str(db_details[0]) ) 
                        json_policy.set_hive_db_paths(str(db_details[0]))
                        json_policy.set_hive_db_names(new_db_name)
                     else:
-                       logging.warn("Hive database "+new_db_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
+                       logging.warn("hive_ms.py.fetch_hive_dbs(): Hive database "+new_db_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
 
                     # If table specific exclusions apply then fetch all tables and locations for the current database
                     if json_policy.table_type == "Exclusion" and json_policy.tables != "*": 
@@ -134,36 +103,8 @@ def fetch_hive_dbs(ranger_hive_policies, servername):
                             cnxn.commit()
                             sqlstate = err.args[1]
                             sqlstate = sqlstate.split(".")
-                            logging.error('Error occured while fetching policy details using sql '+sqltext+'. Rollback. Error message: '.join(sqlstate))
+                            logging.error('hive_ms.py.fetch_hive_dbs(): Error occured while fetching policy details using sql '+sqltext+'. Rollback. Error message: '.join(sqlstate))
                 except:
-                    logging.info("Exception while handling policy: " + str(json_policy.policy_name))
+                    logging.info("hive_ms.py.fetch_hive_dbs(): Exception while handling policy: " + str(json_policy.policy_name))
                     continue
     
-        """#if json_policy.table_type == 'Exclusion':
-        print("Table type = "+json_policy.table_type)
-        if json_policy.tables=="*":
-            logging.info("No specific table exclusions/inclusions found")
-        elif json_policy.table_type == "Exclusion" and json_policy.tables != "*":
-            logging.info("Table exclusions/inclusions found. Determining location")
-            for table_name in json_policy.tables.split(","):
-                try:
-                    print('Obtaining path for '+table_name)
-                    sqltext = "select location from dbo.tbls inner join sds on sds.sd_id = tbls.sd_id where tbl_name ='" + table_name + "'"
-                    cursor.execute(sqltext)
-
-                    #cursor.execute("DESCRIBE DATABASE EXTENDED " + new_db_name)
-                    tbl_details = cursor.fetchone()
-
-                    if tbl_details:
-                        logging.info('Found Hive database '+table_name+' is located at ' +str(tbl_details[0]) ) 
-                        json_policy.set_hive_tbl_paths(str(tbl_details[0]))
-                        json_policy.set_hive_tbl_names(table_name)
-                    else:
-                        logging.warn("Hive database "+table_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
-                except:
-                    logging.info("Exception while handling policy: " + str(json_policy.policy_name))
-                    continue
-        else:
-            logging.info("Policy includes specific table inclusions or unknown configuratoin therefore ignoring the inclusion/exclusions section...")"""
-
-

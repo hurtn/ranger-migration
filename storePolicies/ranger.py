@@ -171,33 +171,73 @@ def get_ranger_policies(servername):
             value = flt[k]
             all_filters += k + "=" + value
             all_filters += "&"
-    endpoint = "https://" + pservername  + "/" + conf["extension"] + "?" + all_filters
-    logging.debug("Fetching policies from ranger endpoint: " + endpoint)
-    r = requests.get(endpoint, auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
-    policies = r.json()
-    
-    return policies
+    endpoint = "http://" + pservername  + ":" + str(conf["port"]) + "/" + conf["extension"] + "?" + all_filters
+    logging.debug("ranger.py: Fetching policies from ranger endpoint: " + endpoint)
+    startIndex=0
+    fetchPolicies = True
+    allpolicies={}
+    temppolicies={}
+    counter =0 
+    while fetchPolicies:
+      r = requests.get(endpoint+'&startIndex='+str(startIndex), auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
+      policies = r.json()
+      logging.info("Policie:" + json.dumps(policies))
+      logging.info("Result size " + str(policies["resultSize"]))
+      counter +=1
+      if policies["resultSize"]== 0: 
+          fetchPolicies = False
+      else:
+          allpolicies= allpolicies.copy()
+          allpolicies.update(policies)
+          startIndex += 100
+    return allpolicies
 
 
 def fetch_ranger_hive_dbs(options,servername):
     # At first, let us get the latest Ranger Hive policies
-    json_formatted_policies = get_ranger_policies(servername)
+    #json_formatted_policies = get_ranger_policies(servername)
 
-    # Handle the pagination case here. Not sure if pagination is indeed present or not
-    if json_formatted_policies["totalCount"] > json_formatted_policies["pageSize"]:
-        pass
+    conf = get_ranger_conf()
+    if servername:
+      pservername = servername
+    else:
+      pservername = conf["server"]
 
+    all_filters = ""
+    for flt in conf["filters"]:
+        key = flt.keys()
+        for k in key:
+            value = flt[k]
+            all_filters += k + "=" + value
+            all_filters += "&"
+    endpoint = "http://" + pservername  + ":" + str(conf["port"]) + "/" + conf["extension"] + "?" + all_filters
+    logging.debug("ranger.py: Fetching policies from ranger endpoint: " + endpoint)
+    startIndex=0
+    fetchPolicies = True
     all_ranger_hive_policies = []
-    for policy in json_formatted_policies["vXPolicies"]:
-        if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and ("tables" in policy) and '' != policy["databases"]:
-            # Now we are all set to create the RangerPolicy object
-            ranger_policy = RangerPolicy(policy["id"], policy["policyName"], policy["repositoryName"],
-                                         policy["repositoryType"], policy["permMapList"], policy["databases"],
-                                         policy["isEnabled"], policy["isRecursive"], policy["tables"], policy["tableType"])
-            all_ranger_hive_policies.append(ranger_policy)
+    counter =0 
+    while fetchPolicies:
+        r = requests.get(endpoint+'&startIndex='+str(startIndex), auth=HTTPBasicAuth(conf["user_name"], conf["password"]))
+        json_formatted_policies = r.json()
+        #logging.info("Policie:" + json.dumpsjson_formatted_policies))
+        logging.info("Result size " + str(json_formatted_policies["resultSize"]))
+        counter +=1
+        if json_formatted_policies["resultSize"]== 0: 
+            fetchPolicies = False
         else:
-            logging.debug("Ignoring non hive policy: " + policy["policyName"] + ". Continuing...")
-            continue
+            startIndex += 100
+
+        for policy in json_formatted_policies["vXPolicies"]:
+            if (policy["repositoryType"].lower() == "hive") and ("databases" in policy) and ("tables" in policy) and '' != policy["databases"]:
+                # Now we are all set to create the RangerPolicy object
+                logging.info('Capturing policy ID '+ str(policy["id"]))
+                ranger_policy = RangerPolicy(policy["id"], policy["policyName"], policy["repositoryName"],
+                                            policy["repositoryType"], policy["permMapList"], policy["databases"],
+                                            policy["isEnabled"], policy["isRecursive"], policy["tables"], policy["tableType"])
+                all_ranger_hive_policies.append(ranger_policy)
+            else:
+                logging.debug("Ignoring non hive policy: " + policy["policyName"] + ". Continuing...")
+                continue
 
     return all_ranger_hive_policies
 

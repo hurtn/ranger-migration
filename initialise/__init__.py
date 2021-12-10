@@ -44,7 +44,7 @@ def initialise():
     connxstr=os.environ["DatabaseConnxStr"]
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
-    logging.info("Connection string: " + connxstr)
+    #logging.info("Connection string: " + connxstr)
     cnxn = pyodbc.connect(connxstr)
 
     stagingtablenm = "ranger_policies_staging"
@@ -192,6 +192,31 @@ def initialise():
         sqlstate = sqlstate.split(".")
         logging.warning('Error occured while creating policy snapshot table. Error message: '.join(sqlstate))
 
+    try:
+        # Create audit report table
+        # This table stores the inconsistencies found during the audit/recon process. 
+        # An entry in this table reflects an inconsistency by principal by permission by path
+        initsql = """
+                CREATE TABLE [dbo].[recon_report](
+                    [audit_timestamp] [datetime] NOT NULL,
+                    [adl_path] [nvarchar](max) NULL,
+                    [principal] [nvarchar](2000) NULL,
+                    [aad_oid] [nvarchar](200) NULL,
+                    [adls_perm] [nvarchar](1) NULL,
+                    [fullpath] [nvarchar](max) NULL,
+                    [Inconsistency] [nvarchar](40) NOT NULL,
+                    [resolved] [nvarchar](1),
+                    [resolved_by] [nvarchar](50)
+                ) 
+            """
+        cursor.execute(initsql)
+        cnxn.commit()
+
+    except pyodbc.DatabaseError as err:
+        #cnxn.commit()
+        sqlstate = err.args[1]
+        sqlstate = sqlstate.split(".")
+        logging.warning('Error occured while creating recon report table. Error message: '.join(sqlstate))
 
     try:
         # Create policy staging table
@@ -268,6 +293,61 @@ def initialise():
         sqlstate = err.args[1]
         sqlstate = sqlstate.split(".")
         logging.warning('Error occured while creating exclusions table. Error message: '.join(sqlstate))
+
+    # Create permission mapping table
+    # This table will store the ranger permissions to be converted to ADLS permissions
+    try:
+        initsql = """
+          create table perm_mapping (
+            ID int  NOT NULL    IDENTITY    PRIMARY KEY,
+            ranger_perm NVARCHAR(100),
+            adls_perm   NVARCHAR(100),
+            date_entered datetime,
+            entered_by NVARCHAR(100));
+        """
+        #logging.info("Truncating staging table: "+(truncsql))
+        cursor.execute(initsql)
+        # insert basic mappings, please customise as necessary
+        insertsql = """insert into perm_mapping (ranger_perm, adls_perm) values ('select','r');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('read','r');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('update','w');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('write','w');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('execute','x');"""
+        cursor.execute(insertsql)
+        cnxn.commit()
+    except pyodbc.DatabaseError as err:
+        cnxn.commit()
+        sqlstate = err.args[1]
+        sqlstate = sqlstate.split(".")
+        logging.warning('Error occured while creating permission mapping table. Error message: '.join(sqlstate))
+
+    # Create AAD principal display name to OID cache table
+    # This table is a performance optimisation to prevent having to make an AAD lookup for every principal
+    try:
+        initsql = """
+          create table aad_cache (
+            ID int  NOT NULL    IDENTITY    PRIMARY KEY,
+            AAD_display_name NVARCHAR(256),
+            AAD_OID   NVARCHAR(100),
+            date_entered datetime,
+            entered_by NVARCHAR(100));
+        """
+        #logging.info("Truncating staging table: "+(truncsql))
+        cursor.execute(initsql)
+        # insert basic mappings, please customise as necessary
+        insertsql = """insert into perm_mapping (ranger_perm, adls_perm) values ('select','r');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('read','r');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('update','w');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('write','w');           
+                        insert into perm_mapping (ranger_perm, adls_perm) values ('execute','x');"""
+        cursor.execute(insertsql)
+        cnxn.commit()
+    except pyodbc.DatabaseError as err:
+        cnxn.commit()
+        sqlstate = err.args[1]
+        sqlstate = sqlstate.split(".")
+        logging.warning('Error occured while creating permission mapping table. Error message: '.join(sqlstate))
+
 
     logging.info('Initialise script complete')
 

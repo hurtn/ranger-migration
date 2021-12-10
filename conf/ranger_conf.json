@@ -1,12 +1,13 @@
 {
-  "server": "ar47-spark-esp-int.azurehdinsight.net",
-  "port": 443,
-  "extension": "ranger/service/public/api/policy",
+  "server": "",
+  "port": 6080,
+  "extension": "service/public/api/policy",
   "user_name": "",
   "password": "",
   "filters" : [
     {
-      "repositoryType" :  "hive"
+      "repositoryType" :  "hive",
+      "pageSize": "100"
     }
   ]
 }

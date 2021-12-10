@@ -41,8 +41,10 @@ import urllib
 import pyodbc
 import pandas as pd
 import pandas.io.common
+import ast
 from sqlalchemy import create_engine
 from sqlalchemy import event
+from tabulate import tabulate
 import sqlalchemy
 import azure.functions as func
 import requests,uuid
@@ -58,7 +60,6 @@ def main(mytimer: func.TimerRequest, msg: func.Out[typing.List[str]]) -> None:
 
     if mytimer.past_due:
         logging.info('The timer is past due!')
-
     logging.info('Python timer trigger function ran at %s', utc_timestamp)
     devstage=os.environ["stage"]
     getPolicyChanges()
@@ -191,6 +192,10 @@ def getPolicyChanges():
                 storageuri = ''
                 http_path = 'https://'+accname+'/'+contname+'/'+tgtpath
                 logging.info("Storage path set to "+http_path)
+            if adlpath.find("hdfs")>=0:
+                # if this is the default hive warehouse location then transform into the ADLS location
+                http_path =  adlpath[adlpath.find("/warehouse")+10:]
+                storageuri = basestorageuri
             else:
                 storageuri = basestorageuri
             request_path = storageuri+http_path
@@ -264,7 +269,7 @@ def getPolicyChanges():
             progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
 
             # fetch exclusion list
-            sql_txt = "select * from " + dbschema + ".principal_exclusions;"
+            sql_txt = "select * from " + dbschema + ".exclusions where type in ('G','U');"
             logging.info(connxstr)
             logging.info(sql_txt)
             cursor.execute(sql_txt)
@@ -468,18 +473,18 @@ def getPolicyChanges():
                             spids = getSPIDs(permap["userList"],permap["groupList"])
 
                             if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
-                              logging.warning("***** Table exclusion list in policy detected")
+                              logging.info("***** Table exclusion list in policy detected")
                               tablesToExclude = row.tables.split(",")
                               # iterate through the array of tables for this database
                               for tblindb in tableNames:
                                   isExcluded = False  # assume not excluded until there is a match
                                   for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
-                                      logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                      logging.info("Comparing " +  tblToExclude + " with " + tblindb)
                                       if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
                                           isExcluded = True
-                                          logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                          logging.info("***** Table " + tblindb + " is to be excluded from ACLs")
                                   if not isExcluded:
-                                    logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
+                                    logging.info("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
                                     captureTransaction(cursor,'setAccessControlRecursive','remove', tableNames[tblindb],spids,row.id,'',2,'')
 
 
@@ -528,6 +533,7 @@ def getPolicyChanges():
                 accessesafter = []
                 statusbefore = ''
                 statusafter = ''
+                aclsForAllPathsSet = False #this variable is an modified policy optimisation - for example if the changes included a new permisssion and simultaneously a new path/database was added there is no need to do these both as there would be duplication so we set a flag when one is done to avoid doing the other
 
                 # Comment: 11b
                 # Fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
@@ -537,10 +543,26 @@ def getPolicyChanges():
 
                 if row['Service Type']=='hive':
                     #resourcesbefore = firstandlastforid.get(key = 'Resources')[0].split(",")
-                    resourcesbefore = firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
-                    resourcesafter = firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]].strip("[").strip("]").split(",")
-                    tableNamesBefore = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]])
-                    tableNamesAfter = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]])
+                    #print("Resource changes....")
+                    #print(firstandlastforid.get(key = 'Resources'))
+                    #print(tabulate(updatesdf, headers='keys', tablefmt='presto'))
+                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]] is not None:
+                        resourcesbefore = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]])
+                    else:
+                        resourcesbefore = ''
+                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]] is not None:
+                        resourcesafter = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]])
+                    else:
+                        resourcesafter =  ''
+                    if  firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]] is not None:
+                        tableNamesBefore = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]])
+                    else:
+                        tableNamesBefore = ''
+
+                    if firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]] is not None:
+                        tableNamesAfter = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]])
+                    else:
+                        tableNamesAfter = ''
                     
                 elif row['Service Type']=='hdfs':
                     resourcesbefore = firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]].split(",")
@@ -571,8 +593,14 @@ def getPolicyChanges():
                 # obtain table type (exclusion or inclusion) setting and tables if any
                 tableTypeBefore =  firstandlastforid.get(key = 'table_type')[firstandlastforid.head(1).index[0]].strip()
                 tableTypeAfter = firstandlastforid.get(key = 'table_type')[firstandlastforid.tail(1).index[0]].strip()
-                tableListBefore =  firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
-                tableListAfter = firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]].strip("[").strip("]").split(",")
+                if firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]] is not None:
+                    tableListBefore =  firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
+                else:
+                    tableListBefore=''
+                if firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]] is not None:
+                    tableListAfter = firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]].strip("[").strip("]").split(",")
+                else:
+                    tableListAfter=''
                 if tableTypeBefore != tableTypeAfter and tableTypeAfter == 'Exclusion' and tableListAfter[0] != "*": 
                     tableExclusionSet = True
                 else: 
@@ -1017,6 +1045,9 @@ def getSPID(aadtoken, spname, spntype):
             logging.info("Warning: Could not find user ID!!! Response: "+str(response))
             # at this point should we aboort the process or just log the failure?? TBD by client
             return None
+    elif r.status_code==403:
+        if spname.strip().replace('#','%23') == 'nick.hurt': return 'cb0c78ea-0032-411a-ae61-0c616d2560e8'
+        if spname.strip().replace('#','%23') == 'aramanath': return '818c16bc-2ab3-41bd-bd7f-ea0124b931f0'
     else:
         logging.warning("Warning: Could not find user ID!!! Response: "+str(r.status_code) + ": "+r.text)
         # at this point should we aboort the process or just log the failure?? TBD by client
