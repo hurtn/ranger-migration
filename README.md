@@ -6,6 +6,13 @@ There are two Python applications in this repo which:
 2. applyPolicies: read changes from the policy table (using the CDC API) and apply the permissions as Storage ACLs
 
 #### Latest Improvements
+- Reconcilliation process to periodically audit actual storage ACLs vs expected permissions found in Ranger
+- Exclude principals and policies from the sychronisatoin process
+- ACLs are applied [concurrently](https://docs.microsoft.com/en-us/azure/azure-functions/functions-bindings-storage-queue-trigger?tabs=csharp#concurrency) (scale out via in-built storage queue algorithm) and applied asynchronously.
+- Validation process examines whether other policies are in conflict with the requested change and if no the request is modified or ignored (rule of maximum)
+- Enhanced logging and metrics are available via the transactions table to keep track of all transaction statuses, progress (number of ACLs updated) and continuation tokens
+- Long running processes can be interrupted/aborted if the same policy is updated with other changes whilst a transaction is in progress. 
+- Failed processes can recover from where the point the transaction was interrupted (within the last batch of 2000) using the continuation token provided by the SDK.
 - Recorded demos of mutiple test cases including adding and removing of permissions in Ranger to one or more policies and associated databases. Please see [the videos folder](https://github.com/hurtn/ranger-migration/tree/master/videos)
 - Instead of making one set ACL API call per user or group, we can batch this is into one call per directory and permission set by using a comma separated lists of access control entries (ACE)
 - No JAR based hive driver is required to connect to hive - the existing pyodbc driver is used and queries are made directly against the Hive database. This reduces the number of dependencies (JVM and JPype) and makes the application bunder much smaller as the Hive Jar was >100MB.
@@ -27,7 +34,7 @@ There are two Python applications in this repo which:
  - ACLs are set recursively (including defaults) using the modify operation to ensure that we preserve existing ACLs. See [the docs](https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update) for more info.
  6. Independent audit process which extracts ACLs for all paths in Ranger policies and compares them to the expected set of ACLs. Inconsistencies are stored in a table which can be regularly polled by Logic App process or PBI report to send alerts.
 
-![image](https://user-images.githubusercontent.com/5063077/128572626-1d1378bf-eafb-4a5a-a470-dbfab9f727b6.png)
+![image](https://user-images.githubusercontent.com/5063077/145583409-dc359f85-8ce7-4918-9bab-4f95affc9b5d.png)
 
 #### Deployment details
 Please see the [following deployment guide](https://github.com/hurtn/ranger-migration/blob/master/deployment.md)
