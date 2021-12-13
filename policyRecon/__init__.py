@@ -89,7 +89,7 @@ def topLevelRecon():
             pathprefix = d[0][0:d[0].find(d[0].split("/")[3]+'/')+len(d[0].split("/")[3]+'/')]
  
             account_name = d[0].split("/")[2][0:d[0].split("/")[2].find('.')]
-            account_key ="Wa1gxxTJC9q6rb0/JbRFVTDc3rjSPd0Usotkhtly6/43pOVOJlS72rnWfK+bTFJ5FVcv188vVJqc1kjC5x6sBg=="
+            account_key =""
  
             service_client = DataLakeServiceClient(account_url="{}://{}.dfs.core.windows.net".format("https",account_name), credential=account_key)
             counter += 1
