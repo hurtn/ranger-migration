@@ -197,6 +197,35 @@ def initialise():
         # This table stores the inconsistencies found during the audit/recon process. 
         # An entry in this table reflects an inconsistency by principal by permission by path
         initsql = """
+                CREATE TABLE [dbo].[ranger_endpoints](
+                    ID int  NOT NULL    IDENTITY    PRIMARY KEY,
+                    endpoint  [nvarchar](2000) NOT NULL,
+                    [last_polled] [datetime],
+                    [last_poll_status] [nvarchar](50),
+                    [last_status_change_date] datetime,
+                    [max_retries] [int],
+                    [retries] [int],
+                    [failure_logic] [nvarchar](20),
+                    [status] [nvarchar](20) NOT NULL,
+                    date_entered datetime,
+                    [added_by] [nvarchar](50)
+                ) 
+            """
+        cursor.execute(initsql)
+        cnxn.commit()
+
+    except pyodbc.DatabaseError as err:
+        #cnxn.commit()
+        sqlstate = err.args[1]
+        sqlstate = sqlstate.split(".")
+        logging.warning('Error occured while creating recon report table. Error message: '.join(sqlstate))
+
+
+    try:
+        # Create audit report table
+        # This table stores the inconsistencies found during the audit/recon process. 
+        # An entry in this table reflects an inconsistency by principal by permission by path
+        initsql = """
                 CREATE TABLE [dbo].[recon_report](
                     [audit_timestamp] [datetime] NOT NULL,
                     [adl_path] [nvarchar](max) NULL,
@@ -229,7 +258,7 @@ def initialise():
         create table ranger_policies_staging (
             ID int,
             Name NVARCHAR(100),
-            RepositoryName NVARCHAR(2000),   
+            RepositoryName NVARCHAR(400),   
             Resources  NVARCHAR(max),
             Paths  NVARCHAR(max),
             Databases nvarchar(max),
