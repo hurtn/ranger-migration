@@ -59,7 +59,7 @@ def database_quality_check(db_name, cursor):
 
 # Fetches the Hive DB metadata from Hive MS for the databases in the Ranger policies & puts the same into the
 
-def fetch_hive_dbs(ranger_hive_policies, servername):
+def fetch_hive_dbs(ranger_hive_policies):
     # Go through the loop of Hive databases and tables from the "local" data copy
     hiveconnxstr= os.environ["DatabaseConnxStr"]
 
@@ -67,24 +67,24 @@ def fetch_hive_dbs(ranger_hive_policies, servername):
 
     cursor = cnxn.cursor()
     for json_policy in ranger_hive_policies:
-        logging.info("Lookup Hive metadata for policy ID "+ str(json_policy.policy_id))
+        #logging.info("Lookup Hive metadata for policy ID "+ str(json_policy.policy_id))
         db_names = json_policy.databases
         # Perform some quality checks on the resource
         new_db_names = database_quality_check(db_names, cursor)
         if not new_db_names:
             # We'll log this and move on
-            logging.warn("Database quality check failed. Proceeding to the next policy.")
+            #logging.warn("Database quality check failed. Proceeding to the next policy.")
             continue
         else:
             for new_db_name in new_db_names:
-                logging.info("POlicy ID "+ str(json_policy.policy_id) + " for db " + new_db_name)
+                #logging.info("POlicy ID "+ str(json_policy.policy_id) + " for db " + new_db_name)
                 try:
                     #logging.info("Fetching details of hive database: " + new_db_name)
                     sqltext = "select db_location_uri from dbo.dbs where name ='" + new_db_name + "'"
                     cursor.execute(sqltext)
                     db_details = cursor.fetchone()
                     if db_details:
-                       logging.info('hive_ms.py.fetch_hive_dbs(): Found Hive database '+new_db_name+' is located at ' +str(db_details[0]) ) 
+                       #logging.info('hive_ms.py.fetch_hive_dbs(): Found Hive database '+new_db_name+' is located at ' +str(db_details[0]) ) 
                        json_policy.set_hive_db_paths(str(db_details[0]))
                        json_policy.set_hive_db_names(new_db_name)
                     else:

@@ -36,6 +36,9 @@ import sys
 from tabulate import tabulate
 sys.path.append( 'C:\workspace\centrica' )
 from storePolicies import metastore
+from storePolicies.hive_ms import fetch_hive_dbs
+from storePolicies.ranger import fetch_ranger_hive_dbs
+
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -53,87 +56,118 @@ def storePolicies():
     connxstr=os.environ["DatabaseConnxStr"]
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
-    cnxn = pyodbc.connect(connxstr)
+    allpolicies = pd.DataFrame()
+    rangerpolicies = pd.DataFrame()
+    tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
 
+    cnxn = pyodbc.connect(connxstr)
+    rangerendpoints = []
     try:
 
-            hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
-            hiveparams = urllib.parse.quote_plus(hiveconnxstr)
-            #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
-            hive_conn_str = 'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
-            hive_engine = create_engine(hive_conn_str,echo=False).connect()
-            # we keep a "local" copy of all hive tables and refresh them every time this app runs
-            # read all required Hive tables into dataframe so  we can store in working database
-            hivedbsdf = pd.read_sql_query('select * from dbs', hive_engine)
-            hivetblsdf = pd.read_sql_query('select * from tbls', hive_engine)
-            hivesdsdf = pd.read_sql_query('select * from sds', hive_engine)
-            #logging.info("Output hive dbs table:")
-            #logging.info(tabulate(hivedf, headers='keys', tablefmt='presto'))
+        # fetch a local copy of the main hive tables
+        hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
+        hiveparams = urllib.parse.quote_plus(hiveconnxstr)
+        #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
+        hive_conn_str = 'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
+        cursor = cnxn.cursor()
+        hive_engine = create_engine(hive_conn_str,echo=False).connect()
+        # we keep a "local" copy of all hive tables and refresh them every time this app runs
+        # read all required Hive tables into dataframe so  we can store in working database
+        hivedbsdf = pd.read_sql_query('select * from dbs', hive_engine)
+        hivetblsdf = pd.read_sql_query('select * from tbls', hive_engine)
+        hivesdsdf = pd.read_sql_query('select * from sds', hive_engine)
+        #logging.info("Output hive dbs table:")
+        #logging.info(tabulate(hivedf, headers='keys', tablefmt='presto'))
 
-            stagingtablenm = "ranger_policies_staging"
-            targettablenm = "ranger_policies"
-            batchsize = 200
-            params = urllib.parse.quote_plus(connxstr)
-            collist = ['ID','Name','RepositoryName','Resources','Service Type','Status','permMapList']
-            #ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
+        stagingtablenm = "ranger_policies_staging"
+        targettablenm = "ranger_policies"
+        batchsize = 200
+        params = urllib.parse.quote_plus(connxstr)
 
-            
-            cursor = cnxn.cursor()
-            truncsql = "TRUNCATE table " + dbname + "." + dbschema + "." + stagingtablenm  
-            #logging.info("Truncating staging table: "+(truncsql))
-            cursor.execute(truncsql)
-            cnxn.commit()
+        conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(params)
+        engine = create_engine(conn_str,echo=False)
 
-            conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(params)
-            engine = create_engine(conn_str,echo=False)
-    
-            # sql alchemy listener
-            @event.listens_for(engine, "before_cursor_execute")
-            def receive_before_cursor_execute(
-            conn, cursor, statement, params, context, executemany
-                ):
-                    if executemany:
-                        cursor.fast_executemany = True
+        # sql alchemy listener
+        @event.listens_for(engine, "before_cursor_execute")
+        def receive_before_cursor_execute(
+        conn, cursor, statement, params, context, executemany
+            ):
+                if executemany:
+                    cursor.fast_executemany = True
 
-            # loading hive tables
-            logging.info("storePolicies: Loading a copy of Hive tables into working database")
-            hivedbsdf.to_sql("dbs",engine,index=False,if_exists="replace")
-            hivetblsdf.to_sql("tbls",engine,index=False,if_exists="replace")
-            hivesdsdf.to_sql("sds",engine,index=False,if_exists="replace")
+        # loading hive tables
+        logging.info("storePolicies: Loading a copy of Hive tables into working database")
+        hivedbsdf.to_sql("dbs",engine,index=False,if_exists="replace")
+        hivetblsdf.to_sql("tbls",engine,index=False,if_exists="replace")
+        hivesdsdf.to_sql("sds",engine,index=False,if_exists="replace")
+
+
+        # clear out the staging table, ready for loading...                    
+        truncsql = "TRUNCATE table " + dbname + "." + dbschema + "." + stagingtablenm  
+        #logging.info("Truncating staging table: "+(truncsql))
+        cursor.execute(truncsql)
+        cnxn.commit()
+
+        # fetch all the ranger endpoints
+        fetchendpoints = "select endpoint from  " + dbname + "." + dbschema + ".ranger_endpoints where status ='live'"
+        #logging.info("Truncating staging table: "+(truncsql))
+        cursor.execute(fetchendpoints)
+        row = cursor.fetchone()
+        while row:
+            rangerendpoints.append(str(row[0]))
+
+            endpoint = row[0]
+            logging.info("Connecting to ranger store @ "+endpoint)  # remember to add -int.azurehdinsight.net to your server name if you wish to connect to the ranger store on HDI using the private address
+            # Connect to Ranger and fetch the Hive policy details in a list
+            ranger_hive_policies = fetch_ranger_hive_dbs(endpoint)
+            #logging.debug(str(ranger_hive_policies)) 
+        
+            # Now connect to Hive and fetch the database metadata details in a list
+            fetch_hive_dbs(ranger_hive_policies)
+
+            pd.set_option("display.max_columns", None)
+            rangerpolicies = pd.DataFrame([x.as_dict() for x in ranger_hive_policies])
+            #rangerpolicies = rangerpolicies.append(ranger_pdf) 
+
+
+            #logging.info(rangerpolicies.to_string())
+            rangerpolicies.columns = tgtcollist
+            #allpolicies.append(rangerpolicies)
+        
+            rangerpolicies = rangerpolicies.astype(str)
+            rangerpolicies = rangerpolicies.applymap(lambda x: x.strip() if isinstance(x, str) else x) #remove any unwanted spaces 
+            rangerpolicies = rangerpolicies.applymap(lambda x: None if x=='nan' else x) #convert any nan strings to null
+            rangerpolicies.replace({'\'': '"'}, regex=True)
+            # uncomment this next line if you want to see the output of the policies in formatted results
+            #logging.info(tabulate(rangerpolicies, headers='keys', tablefmt='presto'))
+
+            # This to_sql method is a SQL alchemy method to fast load bulk data from a pandas dataframe into the staging table. Column names need to match up for the correct mapping.
+            logging.info("Loading staging table with data from "+ str(row[0]))
+            rangerpolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
+            row = cursor.fetchone()
+        
+        sqltext = """select count(*) from """ + dbname + "." + dbschema + "." + stagingtablenm
+        cursor.execute(sqltext)
+        rowcount = cursor.fetchone()[0]
+        logging.info(str(rowcount) + " records inserted into staging table")
+
+        if rowcount>0:
 
             #comment these lines if you are not using local testing i.e. running in Azure Function app with the sample spreadsheet
             #samplefile = "NHPolicySample.csv"
             #pd.options.mode.chained_assignment = None  # default='warn'
+            #collist = ['ID','Name','RepositoryName','Resources','Service Type','Status','permMapList']
             #for csvpolicies in pd.read_csv(samplefile, chunksize=batchsize,names=collist):
-              #allpolicies = csvpolicies[(csvpolicies['Service Type']=='hive')]
-              ##for value in allpolicies.Resources():
-              #allpolicies['paths'] = allpolicies['Resources']
-              ##print(allpolicies.head())
-              ##hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
+                #allpolicies = csvpolicies[(csvpolicies['Service Type']=='hive')]
+                ##for value in allpolicies.Resources():
+                #allpolicies['paths'] = allpolicies['Resources']
+                ##print(allpolicies.head())
+                ##hdfspolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
             
             #comment these two lines if you are running locally with the spreadsheet input and no hive / ranger deployment to poll
-            hivepolicies = getRangerPolicies()
-            allpolicies = hivepolicies #.append(hdfspolicies)
-            
-            allpolicies = allpolicies.astype(str)
-            allpolicies = allpolicies.applymap(lambda x: x.strip() if isinstance(x, str) else x) #remove any unwanted spaces 
-            allpolicies = allpolicies.applymap(lambda x: None if x=='nan' else x) #convert any nan strings to null
-            allpolicies.replace({'\'': '"'}, regex=True)
-            # uncomment this next line if you want to see the output of the policies in formatted results
-            #logging.info(tabulate(allpolicies, headers='keys', tablefmt='presto'))
-
-            # This to_sql method is a SQL alchemy method to fast load bulk data from a pandas dataframe into the staging table. Column names need to match up for the correct mapping.
-            allpolicies.to_sql(stagingtablenm,engine,index=False,if_exists="append")
-            
-
-            sqltext = """select count(*) from """ + dbname + "." + dbschema + "." + stagingtablenm
-            cursor.execute(sqltext)
-            rowcount = cursor.fetchone()[0]
-            logging.info(str(rowcount) + " records inserted into staging table")
+            #hivepolicies = getRangerPolicies()
 
             ## set the checksum on each record so we can use this to determine whether the record changed
-            cnxn = pyodbc.connect(connxstr)
-            cursor = cnxn.cursor()
             updatesql = "update  " + dbname + "." + dbschema + "." + stagingtablenm  + " set [checksum] =  HASHBYTES('SHA1',  (select id,Name,RepositoryName,Resources,permMapList,[Service Type],Status,[paths],databases,db_names,tables,table_type,table_names for xml raw)) "
             #logging.info("Updating checksum: "+ updatesql)
             cursor.execute(updatesql)
@@ -248,7 +282,7 @@ def storePolicies():
             cnxn.autocommit = True
 
 def getRangerPolicies():
-    rangercollist = ['policy_id','policy_name','repository_name','repository_type','perm_map_list','databases','is_enabled','is_recursive','paths','db_names','tables','table_type','tbl_names']
+
     tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
 
     rangerpolicies = metastore.get_ranger_policies_hive_dbs()
