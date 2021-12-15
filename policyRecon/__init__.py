@@ -77,7 +77,7 @@ def topLevelRecon():
     connxstr=os.environ["DatabaseConnxStr"]
     cnxn = pyodbc.connect(connxstr)
 
-    sqlpaths = "select distinct adl_path from policy_snapshot_by_path"
+    sqlpaths = "select distinct adl_path from policy_snapshot_by_path where adl_path !=''"
     cursor = cnxn.cursor()
     cursor.execute(sqlpaths)
     show_db = cursor.fetchall()
