@@ -16,7 +16,7 @@ This table is auto-populated by the respective application and is primarily used
 
 exclusions
 ----------
-This table is used to store policy or principal exclusions, i.e. these are policies or principals (users and groups) which will be excluded/ignored. This may be useful for policies which apply to Hive users only and not to the underlying ADLS data or groups which are administrators of the Ranger service which shouldn't have access to the underlying data. 
+This table should be manually populated and is used to store policy or principal exclusions, i.e. these are policies or principals (users and groups) which will be excluded/ignored. This may be useful for policies which apply to Hive users only and not to the underlying ADLS data or groups which are administrators of the Ranger service which shouldn't have access to the underlying data. 
 For policies the exact policy name and matching case should by provided to exclude policies with a given a name. For users provided the user principal name, and for groups provide the security group name. For users and groups, case is ignored.   
 
 | Column name |  Column Type | Required | Description |
@@ -38,7 +38,7 @@ insert into exclusions (type, identifier) values ('P','all - database')
 perm_mapping
 ------------
 
-This table stores the mapping of Ranger permissions to ADLS equivalent permissions. Needs to be populated prior to running the application therefore defaults are provided, see below.
+This table has defaults which should be reviewed and stores the mapping of Ranger permissions to ADLS equivalent permissions. Needs to be populated prior to running the application therefore defaults are provided, see below.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
@@ -59,7 +59,7 @@ insert into perm_mapping (ranger_perm, adls_perm) values ('execute','x')
 aad_cache
 ---------
 
-This table is a cache of all OIDs from the last apply policies run. It is used as an optimisation so as not to repeatedly query the AAD API for the same user in a given run and is also used in the recon report to translate OIDs (provided by the ADLS API) back to principal names which are compared with the principal names stored in ranger policies.
+This table is automatically populated and is a cache of all OIDs from the last apply policies run. It is used as an optimisation so as not to repeatedly query the AAD API for the same user in a given run and is also used in the recon report to translate OIDs (provided by the ADLS API) back to principal names which are compared with the principal names stored in ranger policies.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
@@ -72,7 +72,7 @@ This table is a cache of all OIDs from the last apply policies run. It is used a
 ranger_endpoints
 ----------------
 
-This table stores the ranger service details. After each endpoint is queried the result are persisted to the database.
+This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
@@ -90,22 +90,65 @@ This table stores the ranger service details. After each endpoint is queried the
 
 policy_snapshot_by_path
 -----------------------
+This table is automatically populated and stores the current snapshot of policies by path, by permission, by principal. It is used when performing business rule validation (e.g rule of maximum) and reconcilliation between ADLS and ranger permissions.
+
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
 | ID | int | - | Row identifier and primary key |
+| RepositoryName | NVARCHAR(200) | N | The ranger repository / service name |   
+| adl_path | NVARCHAR(max) | N | The hive location where the underlying data is stored |
+| permMapList | nvarchar(max) | N | The permaplist is the json array of permissions for a given resource as provided by ranger |  
+| principal | nvarchar(max) | N | The principal from the permaplist for this record |
+| permission | nvarchar(max) | N | The ranger permission granted to this principal | 
+| audit_status | nvarchar(100) | N | TBD The recon status after this permission entry has been compared with ADLS | 
+| audit_date | datetime | N | TBD The date this entry was audtied |
 
 
 ranger_policies
 ---------------
+
+This table is automatically populated with the policies found when polling the ranger endpoints.
+
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
 | ID | int | - | Row identifier and primary key |
+| Name | nvarchar(100) | N | Policy name as obtained from Ranger |
+| RepositoryName | nvarchar(2000) | Y | Primary key. Name of the service therefore it is recommended that each service name is unique across all the provided endpoints |   
+| Resources | nvarchar(max) | N | The path which the permission has been granted on. Only applicable to HDFS policies.
+| paths | nvarchar(max) | N | The path which the permission has been granted on. Ojnly applicable to Hive policies.
+| permMapList | nvarchar(max) | N | The permaplist is the json array of permissions for a given resource as provided by ranger |
+| Databases | nvarchar(max) | N | The list of databases this policy applies to as obtained from Ranger i.e. can include a wildcard |
+| DB_Names | nvarchar(max) | N | The derived value of comma seperated database name. Where a wildcard was used this will contain the full database names extracte |
+| isRecursive | nvarchar(200) | N | Whether the policy is recursive as obtained from Ranger |
+| Service Type | nvarchar(100) | N | Hive or HDFS |
+| Status | nvarchar(100) | N | Whether the policy is active. Values are either True or False |
+| checksum | nvarchar(400) | N | The checksum is a derived field calculated by running Ranger supplied values through a SHA1 algo to obtain a hash. This has compared to determine whether the record has changed |
+| tables | nvarchar(max) | N | The list of tables if supplied as part of an exclusion list. Note this can include wildcards |
+| table_type | nvarchar(100) | N | Ranger value of type Inclusion or Exclusion |
+| table_names | nvarchar(max) | N | The derived comma-separated table names without wildcards.
 
 ranger_policies_staging
 -----------------------
+This table is automatically populated and temporarily stores all policy information obtained from the ranger endpoints for a given scheduled run of the store policies application. This table is used to compare the checksum against the target ranger_policies table to determine whether there is a difference and if so the target policy table is updated. This is done as part of a merge statement.  
+
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
 | ID | int | - | Row identifier and primary key |
+| Name | nvarchar(100) | N | Policy name as obtained from Ranger |
+| RepositoryName | nvarchar(2000) | Y | Primary key. Name of the service therefore it is recommended that each service name is unique across all the provided endpoints |   
+| Resources | nvarchar(max) | N | The path which the permission has been granted on. Only applicable to HDFS policies.
+| paths | nvarchar(max) | N | The path which the permission has been granted on. Ojnly applicable to Hive policies.
+| permMapList | nvarchar(max) | N | The permaplist is the json array of permissions for a given resource as provided by ranger |
+| Databases | nvarchar(max) | N | The list of databases this policy applies to as obtained from Ranger i.e. can include a wildcard |
+| DB_Names | nvarchar(max) | N | The derived value of comma seperated database name. Where a wildcard was used this will contain the full database names extracte |
+| isRecursive | nvarchar(200) | N | Whether the policy is recursive as obtained from Ranger |
+| Service Type | nvarchar(100) | N | Hive or HDFS |
+| Status | nvarchar(100) | N | Whether the policy is active. Values are either True or False |
+| checksum | nvarchar(400) | N | The checksum is a derived field calculated by running Ranger supplied values through a SHA1 algo to obtain a hash. This has compared to determine whether the record has changed |
+| tables | nvarchar(max) | N | The list of tables if supplied as part of an exclusion list. Note this can include wildcards |
+| table_type | nvarchar(100) | N | Ranger value of type Inclusion or Exclusion |
+| table_names | nvarchar(max) | N | The derived comma-separated table names without wildcards.
+
 
 policy_transactions
 -------------------
@@ -160,6 +203,7 @@ Aborted - Stopped.
 
 recon_report
 ------------
+This table stores the differences between ADLS and Ranger
 
 
 
