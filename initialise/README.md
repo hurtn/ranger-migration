@@ -198,12 +198,25 @@ Pending - Passed validation, waiting to sent to the queue
 De-queued - Read from the queue, awaiting processing or currently in progress.
 InProgress -  After the first 2000 ACLs are applied the status will be marked in progress if there are more ACLs to be applied recursively
 Done - The ACLs changes have been successfully applied.
-Abort - Stop any currently running transactions for this policy ID. This normally happens if a change to policy is made while a transaction for the same policy is in progress, i.e. latest version of the policy should take preference and any currently running transaction should stop. Before the ACLs are applied and at every 2000 ACLs the transaction status will be checked. 
+Abort - Stop any currently running transactions for this policy ID. This normalEly happens if a change to policy is made while a transaction for the same policy is in progress, i.e. latest version of the policy should take preference and any currently running transaction should stop. Before the ACLs are applied and at every 2000 ACLs the transaction status will be checked. 
 Aborted - Stopped.
 
 recon_report
 ------------
-This table stores the differences between ADLS and Ranger
+This table stores the inconsistencies found during the audit/recon process. 
+An entry in this table reflects an inconsistency by principal by permission by path
 
+| Column name |  Column Type | Required | Description |
+|-------------|--------------|----------|-------------|
+| ID | int | - | Row identifier and primary key |
+| audit_timestamp | datetime | Y | The timestamp at the time the audit process ran |
+|adl_path | nvarchar(max) | N | The full ADLS path that was audited. This path is compared with the permissions on the snapshot table. |
+| principal | nvarchar(2000) | N | The principal associated with the inconsistency |
+|aad_oid | nvarchar(200) | N | The OID of the principal associated with the inconsistency |
+| adls_perm | nvarchar(1) | N | The permission associated with the inconsistency |
+| fullpath | nvarchar(max) | N | Not applicable |
+| Inconsistency | nvarchar(40) | N | Reason for the inconsistency |
+| resolved | nvarchar(1) | N | Manually set - whether the inconsistency has been resolved or actioned |
+| resolved_by | nvarchar(50) | N | Who resolved the inconsistency |
 
 
