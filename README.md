@@ -1,6 +1,10 @@
+<img align="left" width="80" height="75" src="https://github.com/hurtn/ranger-migration/blob/master/images/RaPTor.png" alt="RaPTor icon"/>
+
 # Project RaPTor - Ranger Policy Translator Tool
 
-## Introduction to Project RaPTor
+&nbsp;
+
+## Introduction 
 
 The intended purpose of this tool is to periodically synchronise resource based Apache Ranger policies with Azure Datalake Storage (ADLS) ACLs. 
 There are two Python applications in this repo which:
