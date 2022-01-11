@@ -2,7 +2,7 @@
 
 ## Introduction to Project RaPTor
 
-The intended purpose of this tool is to periodically synchronise resource based Ranger policies with ADLS storage ACLs. 
+The intended purpose of this tool is to periodically synchronise resource based Apache Ranger policies with Azure Datalake Storage (ADLS) ACLs. 
 There are two Python applications in this repo which:
 1. storePolicies: retrieve policies from one or Ranger policy stores and store these in a SQL database table
 2. applyPolicies: read changes from the policy table (using the CDC API) and apply the permissions as Storage ACLs
