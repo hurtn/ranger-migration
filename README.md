@@ -7,10 +7,10 @@ There are two Python applications in this repo which:
 1. storePolicies: retrieve policies from one or Ranger policy stores and store these in a SQL database table
 2. applyPolicies: read changes from the policy table (using the CDC API) and apply the permissions as Storage ACLs
 
+### High Level Architecture
 &nbsp;
-
 ![image](https://user-images.githubusercontent.com/5063077/145583409-dc359f85-8ce7-4918-9bab-4f95affc9b5d.png)
-
+&nbsp;
 
 #### Summary of Features and Functionality
 1. Retrieve and store policies from multiple Ranger policy stores
