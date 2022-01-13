@@ -77,6 +77,8 @@ One may configure these settings manually or chose to execute them via the cli c
 -  HiveDatabaseConnxStr: This is the connection string to the Hive metastore using SQLAlchemy format e.g. user:password@FQDN_or_IP:port
 -  ScheduleStoreAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
+-  ScheduleInitialiseAppSetting: How frequently the intialise application will run. This is not really meant to run on a schedule but is designed to be run once therefore we set this schedule to an obscure time so that it hardly ever would run on a timer, however we set the app to run on startup in the function.json file. Additionally there is the initialiseSQL config parameter below which when set to 1 will run the DDL, and then when set to 0 will effectively do nothing.
+-  ScheduleReconAppSetting: How frequently the Recon process will run. An axample may be every Saturday morning at 9.30 so that it can run over the weekend.
 -  SPNID: Service principal client ID (only required if using a service principal vs Fn app identity to set ACL permissions)
 -  SPNSecret: Service principal secret. Note this can be stored securely as a key vault value. Use the format @Microsoft.KeyVault(SecretUri=https://keyvaultname.vault.azure.net/secrets/spnsecret/id)
 -  tenantID: Tenant ID. This is used when looking up user/group object IDs in AAD
@@ -89,7 +91,7 @@ az webapp config appsettings set --name functionappaname --resource-group resour
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleApplyAppSetting="0 */10 * * * *"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleApplyAppSetting="0 */10 * * * *"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleInitialiseAppSetting="0 */30 * * * *"
-az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleReconAppSetting="0 */30 * * * *"
+az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleReconAppSetting="0 30 9 * * Sat"
 
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings dbname="dbname"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings dbschema="dbo"
