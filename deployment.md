@@ -63,7 +63,7 @@ Local Prerequisites
 
     ```
     az login
-    az account set --subscription "your-subscription-guiid"
+    az account set --subscription "your-subscription-guid"
     func azure functionapp publish your-function-app-name
     ```
 
