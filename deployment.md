@@ -21,11 +21,12 @@ If the managed identity of the Function App is to be used throughout the solutio
         ```
 
 2. __Function App__ with the following configuration:
- -  Python version 3.6
+ -  Python version 3.7
  -  Function runtime version ~3
  -  Default storage account options
  -  Linux operating system
- -  Premium app service plan
+ -  Elastic Premium EP1 app service plan
+ -  SKU & Size: 210 total ACU, 3.5 GB memory
  -  Enable App Insights 
 3. Enable managed identity of the function app if you are not using the service principal.
   https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity?tabs=dotnet#add-a-system-assigned-identity
