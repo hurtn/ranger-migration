@@ -1,4 +1,4 @@
-## Infrastructure Requirements
+## Infrastructure Requirements and Deployment Guide
 
 If the managed identity of the Function App is to be used throughout the solution then skip the first step, otherwise create a service principal to set permissions on the data lake and access the SQL database.
 
