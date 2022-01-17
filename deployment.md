@@ -90,7 +90,7 @@ Alternatively review and use the CLI commands below:
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings DatabaseConnxStr="Driver={ODBC Driver 17 for SQL Server};Server=tcp:dbservername.database.windows.net,3342;Database=dbname;Uid=username;Pwd=password;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=10;"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleApplyAppSetting="0 */10 * * * *"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleApplyAppSetting="0 */10 * * * *"
-az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleInitialiseAppSetting="0 */30 * * * *"
+az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleInitAppSetting="0 */30 * * * *"
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings ScheduleReconAppSetting="0 30 9 * * Sat"
 
 az webapp config appsettings set --name functionappaname --resource-group resourcegroupname --settings dbname="dbname"
