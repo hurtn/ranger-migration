@@ -35,7 +35,7 @@ import azure.functions as func
 import sys
 from tabulate import tabulate
 sys.path.append( 'C:\workspace\centrica' )
-from storePolicies import metastore
+#from storePolicies import metastore
 from storePolicies.hive_ms import fetch_hive_dbs
 from storePolicies.ranger import fetch_ranger_hive_dbs
 
@@ -68,7 +68,7 @@ def storePolicies():
         hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
         hiveparams = urllib.parse.quote_plus(hiveconnxstr)
         #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
-        hive_conn_str = 'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
+        hive_conn_str = hiveparams#'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
         cursor = cnxn.cursor()
         hive_engine = create_engine(hive_conn_str,echo=False).connect()
         # we keep a "local" copy of all hive tables and refresh them every time this app runs
@@ -281,16 +281,6 @@ def storePolicies():
     finally:
             cnxn.autocommit = True
 
-def getRangerPolicies():
-
-    tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
-
-    rangerpolicies = metastore.get_ranger_policies_hive_dbs()
-    #logging.info(rangerpolicies.to_string())
-
-    rangerpolicies.columns = tgtcollist
-    #logging.info(rangerpolicies.head())
-    return rangerpolicies
 
 #storePolicies()
 #getRangerPolicies()
