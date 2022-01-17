@@ -68,6 +68,7 @@ Local Prerequisites
     ```
 
 Cloudshell
+
      ```
     func azure functionapp publish your-function-app-name
     ```    
