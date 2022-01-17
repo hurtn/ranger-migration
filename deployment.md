@@ -74,7 +74,7 @@ One may configure these settings manually or chose to execute them via the cli c
 -  dbname: This is the name of the database created in step 3 above
 -  dbschema: Database schema, usually dbo
 -  basestorageendpoint: This is the filesystem endpoint of the target storage location e.g. https://[storage_accoount].dfs.core.windows.net/[container]
--  HiveDatabaseConnxStr: This is the connection string to the Hive metastore using SQLAlchemy format e.g. user:password@FQDN_or_IP:port
+-  HiveDatabaseConnxStr: This is the connection string to the Hive metastore. Depending on the Hive database engine, either use the MS SQL Server connection string format as above or use the MySQL SQLAlchemy format e.g. mysql+pymysql://[user:password@FQDN_or_IP:port]/[databasename]?charset=utf8mb4
 -  ScheduleStoreAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleInitialiseAppSetting: How frequently the intialise application will run. This is not really meant to run on a schedule but is designed to be run once therefore we set this schedule to an obscure time so that it hardly ever would run on a timer, however we set the app to run on startup in the function.json file. Additionally there is the initialiseSQL config parameter below which when set to 1 will run the DDL, and then when set to 0 will effectively do nothing.
