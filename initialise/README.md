@@ -72,7 +72,7 @@ This table is automatically populated and is a cache of all OIDs from the last a
 ranger_endpoints
 ----------------
 
-This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database.
+This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database. For HDI deployments the ranger API endpoint is https://[servername]-int.azurehdinsight.net/ranger/service/public/api/policy where "-int" is used to communicate via the private address.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
