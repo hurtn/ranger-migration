@@ -51,8 +51,8 @@ If the managed identity of the Function App is to be used throughout the solutio
 
 ## Configure the Function App
 
-1. Clone this repo to your local environment
-2. Navigate to the ranger-migration directory and deploy the function app code using the command below with the necessary pre-requisites. 
+1. Clone this repo to your local environment or the Azure Cloud Shell environment (simpler)
+2. Navigate to the ranger-migration directory and deploy the function app code using the commands below depending on the environment, note the necessary pre-requisites. 
 3. Alternatively deploy the function using [VSCode](https://docs.microsoft.com/en-us/azure/azure-functions/functions-develop-vs-code?tabs=python) but ensure to chose the advanced option to deploy in the Premium app service plan.
 
 Local Prerequisites
@@ -66,6 +66,12 @@ Local Prerequisites
     az account set --subscription "your-subscription-guid"
     func azure functionapp publish your-function-app-name
     ```
+
+Cloudshell
+
+   ```
+    func azure functionapp publish your-function-app-name
+   ```    
 
 4. Configure the following app settings
 
