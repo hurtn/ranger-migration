@@ -68,7 +68,7 @@ def storePolicies():
         hiveconnxstr = os.environ["HiveDatabaseConnxStr"]
         hiveparams = urllib.parse.quote_plus(hiveconnxstr)
         #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
-        hive_conn_str = hiveparams#'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
+        hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)#'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
         cursor = cnxn.cursor()
         hive_engine = create_engine(hive_conn_str,echo=False).connect()
         # we keep a "local" copy of all hive tables and refresh them every time this app runs
