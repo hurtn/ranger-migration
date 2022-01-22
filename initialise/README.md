@@ -72,7 +72,7 @@ This table is automatically populated and is a cache of all OIDs from the last a
 ranger_endpoints
 ----------------
 
-This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database. For HDI deployments the ranger API endpoint is https://[servername]-int.azurehdinsight.net/ranger/service/public/api/policy where "-int" is used to communicate via the private address.
+This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database. For HDI deployments the ranger API endpoint is https://[servername]-int.azurehdinsight.net/ranger/service/public/api/policy?repositoryName=[rangerservicename] where "-int" is used to communicate via the private address and rangerservicename is the name of the repository / service found in the ranger admin UI under the list of hive services.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
