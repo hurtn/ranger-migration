@@ -176,8 +176,8 @@ For ADLS API/SDK information please see [the documentation](https://docs.microso
 | exclusion_list | nvarchar(max) | N | The exclusion list as found in the exclusion table |
 | principals_included | nvarchar(max) | N | The principals that were remaining after excluded principals were removed |
 | acl_count | int | N | The number of ACLs changed. This value is updated as each batch (of 2000) is applied |
-| adl_permission_str | nvarchar(3) | N | The ADLS permission string in the format of rwx. "-" indicates no permission for that position |
-| permission_json | nvarchar(max) | The permission string in json format |
+| adl_permission_str | nvarchar(3) | N | The ADLS permission string in the format of rwx. "-" indicates no permission for that position. This field shows what the ACLs should be set to this for this transaction and is used in constructing the ACE entry. |
+| permission_json | nvarchar(max) | The permission string in json format. Note that when permissions are removed this field will show which permission was removed as opposed to the the adl_permission_str which will show which permissions remain. This is because the adl_permission_str field will be used when setting the ACE entry |
 | depends_on | int | N | TBD The transaction ID that this transaction depends on/must wait for before being applied. This is used for defining a hierarchy of permissions to be applied |
 
 Policy change types:
