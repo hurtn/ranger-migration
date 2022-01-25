@@ -38,7 +38,7 @@ insert into exclusions (type, identifier) values ('P','all - database')
 perm_mapping
 ------------
 
-This table has defaults which should be reviewed and stores the mapping of Ranger permissions to ADLS equivalent permissions. Needs to be populated prior to running the application therefore defaults are provided, see below.
+This table stores the mapping of Ranger permissions to ADLS equivalent permissions. Note: This table needs to be populated prior to running the application therefore defaults are provided, see below, however these should be reviewed before running of this app/script as changes made to this table after initial synchronisation may not render existing ACLs incorrect and full re-sync may be required!!!
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
