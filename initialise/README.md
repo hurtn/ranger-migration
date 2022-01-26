@@ -38,7 +38,7 @@ insert into exclusions (type, identifier) values ('P','all - database')
 perm_mapping
 ------------
 
-This table has defaults which should be reviewed and stores the mapping of Ranger permissions to ADLS equivalent permissions. Needs to be populated prior to running the application therefore defaults are provided, see below.
+This table stores the mapping of Ranger permissions to ADLS equivalent permissions. Note: This table needs to be populated prior to running the application therefore defaults are provided, see below, however these should be reviewed before running of this app/script as changes made to this table after initial synchronisation may not render existing ACLs incorrect and full re-sync may be required!!! This table is also used during the recon process so changes made after initial sychronisation may result in mismatching permissions.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
@@ -72,7 +72,7 @@ This table is automatically populated and is a cache of all OIDs from the last a
 ranger_endpoints
 ----------------
 
-This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database.
+This table is manually populated and stores the ranger service details. After each endpoint is queried the result are persisted to the database. For HDI deployments the ranger API endpoint is https://[servername]-int.azurehdinsight.net/ranger/service/public/api/policy?repositoryName=[rangerservicename] where "-int" is used to communicate via the private address and rangerservicename is the name of the repository / service found in the ranger admin UI under the list of hive services.
 
 | Column name |  Column Type | Required | Description |
 |-------------|--------------|----------|-------------|
@@ -176,8 +176,8 @@ For ADLS API/SDK information please see [the documentation](https://docs.microso
 | exclusion_list | nvarchar(max) | N | The exclusion list as found in the exclusion table |
 | principals_included | nvarchar(max) | N | The principals that were remaining after excluded principals were removed |
 | acl_count | int | N | The number of ACLs changed. This value is updated as each batch (of 2000) is applied |
-| adl_permission_str | nvarchar(3) | N | The ADLS permission string in the format of rwx. "-" indicates no permission for that position |
-| permission_json | nvarchar(max) | The permission string in json format |
+| adl_permission_str | nvarchar(3) | N | The ADLS permission string in the format of rwx. "-" indicates no permission for that position. This field shows what the ACLs should be set to this for this transaction and is used in constructing the ACE entry. |
+| permission_json | nvarchar(max) | The permission string in json format. Note that when permissions are removed this field will show which permission was removed as opposed to the the adl_permission_str which will show which permissions remain. This is because the adl_permission_str field will be used when setting the ACE entry |
 | depends_on | int | N | TBD The transaction ID that this transaction depends on/must wait for before being applied. This is used for defining a hierarchy of permissions to be applied |
 
 Policy change types:

@@ -136,4 +136,5 @@ If you wish to use private networking then the following post configuraiton are 
 8. Configure diagnostic logging to Log Analytics. Please see [the documentation](https://docs.microsoft.com/en-us/azure/azure-functions/functions-monitor-log-analytics) for more details.  
 9. AAD directory permissions - in order to look up users and groups in the directory the following permissions need to be granted to either the service principal or managed identity
 ![image](https://user-images.githubusercontent.com/5063077/124998868-0a978700-e045-11eb-93f2-ce271fe24029.png)
+10. Read through the [table reference guide](https://github.com/hurtn/ranger-migration/blob/master/initialise/README.md) to understand which tables are deployed as part of the initialise function and which require values to be configured, for example the ranger endpoints.
 
