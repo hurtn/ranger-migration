@@ -70,7 +70,12 @@ def storePolicies():
         #hive_conn_str needs to be in SQLAlchemy format eg  username:password@FQDN_or_IP:port
         hive_conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(hiveparams)#'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4' 
         cursor = cnxn.cursor()
-        hive_engine = create_engine(hive_conn_str,echo=False).connect()
+        try:
+            hive_engine = create_engine(hive_conn_str,echo=False).connect()
+        except:
+            # try the mysql connection string if mssql failed
+            hive_conn_str = 'mysql+pymysql://' + hiveconnxstr + '/metastore?charset=utf8mb4'     
+            hive_engine = create_engine(hive_conn_str,echo=False).connect()
         # we keep a "local" copy of all hive tables and refresh them every time this app runs
         # read all required Hive tables into dataframe so  we can store in working database
         hivedbsdf = pd.read_sql_query('select * from dbs', hive_engine)
