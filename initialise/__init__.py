@@ -380,6 +380,31 @@ def initialise():
 
 
         logging.info('Initialise script complete')
+    elif initialiseSQL == '2':     # this is to erase existing working data (not lookup information) such as control, policy and transaction table
+        logging.info('Attempting to reset operation data')
+        cursor = cnxn.cursor()
+        try:
+            resetql = """EXEC sys.sp_cdc_disable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @capture_instance = 'all';"""
+            cursor.execute(resetsql)
+            resetql = """TRUNCATE TABLE DBO.RANGER_POLICIES;"""
+            cursor.execute(resetsql)
+            resetql = """ TRUNCATE TABLE DBO.POLICY_CTL;"""
+            cursor.execute(resetsql)
+            resetql = """ truncate table dbo.policy_transactions;"""
+            cursor.execute(resetsql)
+            resetql = """ truncate table dbo.policy_snapshot_by_path"""
+            cursor.execute(resetsql)
+            resetql = """EXEC sys.sp_cdc_enable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @role_name = 'null', @supports_net_changes = 1;"""
+            cursor.execute(resetsql)
+            cnxn.commit()
+        except pyodbc.DatabaseError as err:
+            cnxn.commit()
+            sqlstate = err.args[1]
+            sqlstate = sqlstate.split(".")
+            logging.warning('Error occured while running reset script. Error message: '.join(sqlstate))
+
+
+        logging.info('Reset script complete')
     else:
         logging.info('Initialise script disabled')
 initialise()
