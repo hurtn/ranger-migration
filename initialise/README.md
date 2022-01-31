@@ -78,6 +78,8 @@ This table is manually populated and stores the ranger service details. After ea
 |-------------|--------------|----------|-------------|
 | ID | int | - | Row identifier and primary key |
 | endpoint |nvarchar(2000) | Y | The URL of the ranger endpoint to query. |
+| username |nvarchar(200) | N | The username for this ranger endpoint. If not set, the username from the function app configuration setting will be used for all ranger endpoints. |
+| password |nvarchar(200) | N | The password for this ranger endpoint. If not set, the password from the function app configuration setting will be used for all ranger endpoints. |
 | last_polled |datetime | N | The last date time the endpoint was queried. |
 | last_poll_status | nvarchar(50) | N | The status of the last HTTP GET request from this endpoint. |
 | last_status_change_date | datetime | N | The last time the HTTP GET status changed. |
