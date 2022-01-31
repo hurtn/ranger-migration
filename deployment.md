@@ -1,6 +1,6 @@
 ## Infrastructure Requirements and Deployment Guide
 
-If the managed identity of the Function App is to be used throughout the solution then skip the first step, otherwise create a service principal to set permissions on the data lake and access the SQL database.
+This solution supports either managed identity or service principal based authentication and authorisation to set permissions on the data lake and access the SQL database. From an application perspective, this is determined by whether the SPNID and SPNSecret app cconfigurations settings exist or not. If not, the managed identity of the Function App will be used throughout the solution. Based on your setup the first step may not be required.
 
  1. __Service Principal__.   
  
@@ -85,11 +85,13 @@ One may configure these settings manually or chose to execute them via the cli c
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleInitialiseAppSetting: How frequently the intialise application will run. This is not really meant to run on a schedule but is designed to be run once therefore we set this schedule to an obscure time so that it hardly ever would run on a timer, however we set the app to run on startup in the function.json file. Additionally there is the initialiseSQL config parameter below which when set to 1 will run the DDL, and then when set to 0 will effectively do nothing.
 -  ScheduleReconAppSetting: How frequently the Recon process will run. An axample may be every Saturday morning at 9.30 so that it can run over the weekend.
--  SPNID: Service principal client ID (only required if using a service principal vs Fn app identity to set ACL permissions)
--  SPNSecret: Service principal secret. Note this can be stored securely as a key vault value. Use the format @Microsoft.KeyVault(SecretUri=https://keyvaultname.vault.azure.net/secrets/spnsecret/id)
+-  rangerusername: This can be used as a global username for all ranger stores. Alternatively specify the username for each endpoint in the ranger_endpoint table.
+-  rnagerpassword: This can be used as a global apsword for all ranger stores. Alternatively specify the password for each endpoint in the ranger_endpoint table. 
+-  SPNID: Only create this setting if Service Principal is to be used, otherwise the application will default to managed identity based auth. Use the Service principal client ID.
+-  SPNSecret:  Service principal secret. Note this can be stored securely as a key vault value. Use the format @Microsoft.KeyVault(SecretUri=https://keyvaultname.vault.azure.net/secrets/spnsecret/id) Only create this setting if Service Principal based auth is to be used, otherwise the application will default to managed identity.
 -  tenantID: Tenant ID. This is used when looking up user/group object IDs in AAD
 -  AzureStorageQueuesConnectionString: This is the connection string to the storage queue where the work items are stored/retrieved using the function app binding
--  initialiseSQL: This configuration defines whether to run the SQL intialisation script. Should be set to 1 for the first time and then set to 0 after the database has been initialised. Not that you will need to restart the app once the configuration change is made.
+-  initialiseSQL: This configuration defines whether to run the SQL intialisation script. Should be set to 1 for the first time and then set to 0 after the database has been initialised. Can be set to 2 if you wish to erase all the operational data i.e. not configuration data but policy and transaction information. This should be used with caution as it will trigger a full resynchronisation of all policies. Not that you will need to restart the app once the configuration change is made.
 
 Alternatively review and use the CLI commands below:
 ```
