@@ -33,7 +33,8 @@ This solution supports either managed identity or service principal based authen
 
 3.5 If you require private networking then at this point you may need to upgrade your storage account from gen1 to gen2. Click on the configuration blade and click the upgrade button. This will allow you to create a private endpoint to the storage account for the function app running within the vnet.
 
-4. __SQL Managed Instance Database__ to store the Ranger policies. Ideally use a seperate database to avoid conflicts.
+4. __SQL Managed Instance Database__ to store the Ranger policies. Ideally use a seperate database to avoid conflicts. The following SKU is sufficient: 
+General Purpose Standard-series (Gen 5) (256 GB, 4 vCores
 5. If you wish to use the managed identity of the Function App as a database user then there a few additional steps in italics to consider:
   - *First ensure the SQL MI identity has read permissions on the AAD. See [the following documentation](https://docs.microsoft.com/en-gb/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#azure-ad-admin-with-a-server-in-sql-database)
   - *Next, set an AAD admin. Please see [the following documentation](https://docs.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#provision-azure-ad-admin-sql-managed-instance)
