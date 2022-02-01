@@ -39,7 +39,7 @@ General Purpose Standard-series (Gen 5) (256 GB, 4 vCores
   - *First ensure the SQL MI identity has read permissions on the AAD. See [the following documentation](https://docs.microsoft.com/en-gb/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#azure-ad-admin-with-a-server-in-sql-database)
   - *Next, set an AAD admin. Please see [the following documentation](https://docs.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-configure?tabs=azure-powershell#provision-azure-ad-admin-sql-managed-instance)
   - Create a new database and using a user with sysadmin permissions, and ensure to __enable CDC for the database__. See [the following documentation](https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sys-sp-cdc-enable-db-transact-sql?view=sql-server-ver15)
-  - If necessary create a separate database user and provide the appropriate permissions.
+  - You can use the managed identity of the function app or create a separate database user and provide the appropriate permissions as shown below. Note that the connection string specified in the function app configuration will use the authentication flag as described in step 4 of configuring the function app settings below
   - *Create the user and provide necessary permissions e.g.:
       - CREATE USER [Function App name] FROM EXTERNAL PROVIDER;
       - GRANT CONTROL ON DATABASE::[centricapolicydb] TO [Function App name];
@@ -77,11 +77,11 @@ Cloudshell
 4. Configure the following app settings
 
 One may configure these settings manually or chose to execute them via the cli commands below
--  DatabaseConnxStr: This is the connection string to the SQL database in item 3 above. The format is Driver={ODBC Driver 17 for SQL Server};Server=tcp:[server].database.windows.net,1433;Database=[database];Authentication=ActiveDirectoryMsi. This uses the managed identity of the Function App to authenticate against the database which requires configuration as described in Step 4 above. If you are using SQL auth then please use Uid=xxxxx;Pwd=xxxxx instead of the Authentication flag.
+-  DatabaseConnxStr: This is the connection string to the SQL database in item 3 above. The format is Driver={ODBC Driver 17 for SQL Server};Server=tcp:[server].database.windows.net,1433;Database=[database];Authentication=ActiveDirectoryMsi. This final authentication flag is an option when using the managed identity of the Function App to authenticate against the database which requires configuration as described in Step 4 above. If you are using SQL auth then please use Uid=xxxxx;Pwd=xxxxx instead of the Authentication flag.
 -  dbname: This is the name of the database created in step 3 above
 -  dbschema: Database schema, usually dbo
 -  basestorageendpoint: This is the filesystem endpoint of the target storage location e.g. https://[storage_accoount].dfs.core.windows.net/[container]
--  HiveDatabaseConnxStr: This is the connection string to the Hive metastore. Depending on the Hive database engine, either use the MS SQL Server connection string format as above or use the MySQL SQLAlchemy format e.g. mysql+pymysql://[user:password@FQDN_or_IP:port]/[databasename]?charset=utf8mb4
+-  HiveDatabaseConnxStr: This is the connection string to the Hive metastore. If using managed identity authentication refer to the connection string details above. Depending on the Hive database engine, either use the MS SQL Server connection string format as above or use the MySQL SQLAlchemy format e.g. mysql+pymysql://[user:password@FQDN_or_IP:port]/[databasename]?charset=utf8mb4
 -  ScheduleStoreAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleApplyAppSetting: How frequently the Apply policies application will run in NCRONTAB expression format i.e. {second} {minute} {hour} {day} {month} {day-of-week} so every 5 minutes would be 0 */5 * * * *
 -  ScheduleInitialiseAppSetting: How frequently the intialise application will run. This is not really meant to run on a schedule but is designed to be run once therefore we set this schedule to an obscure time so that it hardly ever would run on a timer, however we set the app to run on startup in the function.json file. Additionally there is the initialiseSQL config parameter below which when set to 1 will run the DDL, and then when set to 0 will effectively do nothing.
