@@ -181,6 +181,7 @@ def initialise():
                     adl_path  NVARCHAR(max),
                     permMapList nvarchar(max),
                     principal  nvarchar(max),
+                    principal_type  nvarchar(20),
                     permission nvarchar(max),
                     audit_status  NVARCHAR(100),
                     audit_date datetime)
@@ -201,6 +202,8 @@ def initialise():
                     CREATE TABLE [dbo].[ranger_endpoints](
                         ID int  NOT NULL    IDENTITY    PRIMARY KEY,
                         endpoint  [nvarchar](2000) NOT NULL,
+                        username  [nvarchar](200) NOT NULL,
+                        password  [nvarchar](200) NOT NULL,
                         [last_polled] [datetime],
                         [last_poll_status] [nvarchar](50),
                         [last_status_change_date] datetime,
@@ -315,9 +318,26 @@ def initialise():
                 entered_by NVARCHAR(100));
 
             """
-            #logging.info("Truncating staging table: "+(truncsql))
             cursor.execute(initsql)
             cnxn.commit()
+
+
+            #logging.info("Truncating staging table: "+(truncsql))
+            insertsql = """insert into exclusions (type, identifier) values ('U','admin')
+                            insert into exclusions (type, identifier) values ('U','{OWNER}')
+                            insert into exclusions (type, identifier) values ('P','Information_schema database tables columns') 
+                            insert into exclusions (type, identifier) values ('P','all - database') 
+                            insert into exclusions (type, identifier) values ('P','all - hiveservice') 
+                            insert into exclusions (type, identifier) values ('P','all - database, table, column') 
+                            insert into exclusions (type, identifier) values ('P','all - database, table') 
+                            insert into exclusions (type, identifier) values ('P','all - database, udf') 
+                            insert into exclusions (type, identifier) values ('P','all - url') 
+                            insert into exclusions (type, identifier) values ('P','default database tables columns')
+                            insert into exclusions (type, identifier) values ('P','hivesampletable_policy')
+                            insert into exclusions (type, identifier) values ('G','public')
+                            """
+            cursor.execute(insertsql)
+            cnxn.commit() 
         except pyodbc.DatabaseError as err:
             cnxn.commit()
             sqlstate = err.args[1]
@@ -364,13 +384,6 @@ def initialise():
             """
             #logging.info("Truncating staging table: "+(truncsql))
             cursor.execute(initsql)
-            # insert basic mappings, please customise as necessary
-            insertsql = """insert into perm_mapping (ranger_perm, adls_perm) values ('select','r');           
-                            insert into perm_mapping (ranger_perm, adls_perm) values ('read','r');           
-                            insert into perm_mapping (ranger_perm, adls_perm) values ('update','w');           
-                            insert into perm_mapping (ranger_perm, adls_perm) values ('write','w');           
-                            insert into perm_mapping (ranger_perm, adls_perm) values ('execute','x');"""
-            cursor.execute(insertsql)
             cnxn.commit()
         except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -384,17 +397,17 @@ def initialise():
         logging.info('Attempting to reset operation data')
         cursor = cnxn.cursor()
         try:
-            resetql = """EXEC sys.sp_cdc_disable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @capture_instance = 'all';"""
+            resetsql = """EXEC sys.sp_cdc_disable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @capture_instance = 'all';"""
             cursor.execute(resetsql)
-            resetql = """TRUNCATE TABLE DBO.RANGER_POLICIES;"""
+            resetsql = """TRUNCATE TABLE DBO.RANGER_POLICIES;"""
             cursor.execute(resetsql)
-            resetql = """ TRUNCATE TABLE DBO.POLICY_CTL;"""
+            resetsql = """ TRUNCATE TABLE DBO.POLICY_CTL;"""
             cursor.execute(resetsql)
-            resetql = """ truncate table dbo.policy_transactions;"""
+            resetsql = """ truncate table dbo.policy_transactions;"""
             cursor.execute(resetsql)
-            resetql = """ truncate table dbo.policy_snapshot_by_path"""
+            resetsql = """ truncate table dbo.policy_snapshot_by_path;"""
             cursor.execute(resetsql)
-            resetql = """EXEC sys.sp_cdc_enable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @role_name = 'null', @supports_net_changes = 1;"""
+            resetsql = """EXEC sys.sp_cdc_enable_table @source_schema = 'dbo', @source_name = 'ranger_policies', @role_name = 'null', @supports_net_changes = 1;"""
             cursor.execute(resetsql)
             cnxn.commit()
         except pyodbc.DatabaseError as err:
