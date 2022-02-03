@@ -36,7 +36,8 @@ from azure.core.exceptions import AzureError
 from azure.storage.filedatalake.aio import (
     DataLakeServiceClient,
 )
-from azure.identity.aio import ClientSecretCredential #DefaultAzureCredential 
+from azure.identity.aio import ClientSecretCredential #used for service principal based auth
+from azure.identity.aio import DefaultAzureCredential #used for managed identity based auth
 
 async def main(msg: func.QueueMessage):
     logging.info('Python queue trigger function processed a queue item.')
@@ -57,8 +58,8 @@ async def main(msg: func.QueueMessage):
     result =  json.loads(msg.get_body().decode('utf-8'))
     logging.info("..............Dequeued: "+ json.dumps(result))
     tenantid=os.environ["tenantID"]
-    spnid= os.environ["SPNID"]
-    spnsecret= os.environ["SPNSecret"]
+    spnid= os.environ.get('SPNID','')
+    spnsecret= os.environ.get('SPNSecret','')
     connxstr=os.environ["DatabaseConnxStr"]
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
@@ -73,79 +74,85 @@ async def main(msg: func.QueueMessage):
     cursor.execute(queue_itm)
     transrow = cursor.fetchone()
     if transrow:
-      logging.info('De-queued transaction ID '+ str(result["id"]) + ' with transaction status ' + transrow[0] + '. Checking for continuation token... ' + transrow[1] ) 
-      if transrow[1] != '':
-        vContinuationToken = transrow[1]
-        vContinuationMsg = 'Recovering with continuation token' + vContinuationToken
-    else:
-      logging.error('Could not find transaction record with ID ' + str(result["id"]) + '. Please contact support')
+            logging.info('De-queued transaction ID '+ str(result["id"]) + ' with transaction status ' + str(transrow[0]) + '. Checking for continuation token... ') 
 
-    if transrow[0] not in ('Abort','Aborted'):
-        queue_upd = "update " + dbschema + ".policy_transactions set trans_status = 'De-queued',  trans_reason = concat(trans_reason, '" + vContinuationMsg + "'), last_updated = '"+ captureTime + "' where trans_status <>  'Aborted' and trans_status <> 'Abort' and id = "+str(result["id"])
-        logging.info(queue_upd)
-        cursor.execute(queue_upd)
-        cnxn.commit()
-        #if len(recsupdated)>0:
-        try:
-            u1_start = perf_counter()         
+            if transrow[1]:  # if a continuation token exists
+                vContinuationToken = transrow[1]
+                vContinuationMsg = 'Recovering with continuation token' + vContinuationToken
 
-            #storagetoken = getBearerToken(tenantid,"storage.azure.com",spnid,spnsecret)
-            #acls_changed += setADLSBulkPermissions(storagetoken, str(result["storage_url"]), str(result["acentry"]),str(result["trans_action"]),str(result["trans_mode"]))
+            if vContinuationToken != '':
+                logging.info('Continuation token =' +  str(vContinuationToken))
 
-
-            default_credential = ClientSecretCredential(            tenantid,            spnid,            spnsecret,       )
-            #default_credential = DefaultAzureCredential()
-
-            urlparts =  str(result["storage_url"]).split('/',4)
-            service_client = DataLakeServiceClient("https://{}".format(urlparts[2]),
-                                                        credential=default_credential)
-
-            logging.info("Obtained service client")
-            async with service_client:
-                filesystem_client = service_client.get_file_system_client(file_system=urlparts[3])
-                logging.info('Setting ACLs recursively ' + str(result['acentry']))
-                acls_changed = await set_recursive_access_control(filesystem_client,urlparts[4], str(result["acentry"]),result["id"],u1_start, str(result["trans_mode"]), vContinuationToken)
-                #logging.info("No ACL changes = "+ str(acls_changed))
-                await filesystem_client.close()
-                await service_client.close()  
-                now =  datetime.datetime.utcnow()
-                captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
-                u1_stop = perf_counter()
-                if not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
-                    if not acls_changed or acls_changed == 0:
-                            acls_changed=0
-                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Warning', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed but did not set any ACLS. This may be due to an empty folder. Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
-                    elif acls_changed == -4:
-                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Aborted', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted due to user error correction in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
-                    else:
-                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
-                else:
-                    queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Done', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed in " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
-                logging.info("!!!!! Queue update SQL: "+queue_comp)
-                cursor.execute(queue_comp)
+            if transrow[0] not in ('Abort','Aborted'): # if not in an aborted state then mark as de-queued
+                queue_upd = "update " + dbschema + ".policy_transactions set trans_status = 'De-queued',  trans_reason = concat(trans_reason, '" + vContinuationMsg + "'), last_updated = '"+ captureTime + "' where trans_status <>  'Aborted' and trans_status <> 'Abort' and id = "+str(result["id"])
+                logging.info(queue_upd)
+                cursor.execute(queue_upd)
                 cnxn.commit()
-                logging.info("!!!!! Queue update completed: "+queue_comp)
+                #if len(recsupdated)>0:
+                try:
+                    u1_start = perf_counter()         
 
+                    #storagetoken = getBearerToken(tenantid,"storage.azure.com",spnid,spnsecret)
+                    #acls_changed += setADLSBulkPermissions(storagetoken, str(result["storage_url"]), str(result["acentry"]),str(result["trans_action"]),str(result["trans_mode"]))
+
+                    if spnid!='' and spnsecret!='': # use service principal credentials
+                        default_credential = ClientSecretCredential(            tenantid,            spnid,            spnsecret,       )
+                    else: # else use managed identity credentials
+                        default_credential = DefaultAzureCredential() 
+
+                    urlparts =  str(result["storage_url"]).split('/',4)
+                    service_client = DataLakeServiceClient("https://{}".format(urlparts[2]),
+                                                                credential=default_credential)
+
+                    logging.info("Obtained service client")
+                    async with service_client:
+                        filesystem_client = service_client.get_file_system_client(file_system=urlparts[3])
+                        logging.info('Setting ACLs recursively ' + str(result['acentry']))
+                        acls_changed = await set_recursive_access_control(filesystem_client,urlparts[4], str(result["acentry"]),result["id"],u1_start, str(result["trans_mode"]), vContinuationToken)
+                        #logging.info("No ACL changes = "+ str(acls_changed))
+                        await filesystem_client.close()
+                        await service_client.close()  
+                        now =  datetime.datetime.utcnow()
+                        captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
+                        u1_stop = perf_counter()
+                        if not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
+                            if not acls_changed or acls_changed == 0:
+                                    acls_changed=0
+                                    queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Warning', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed but did not set any ACLS. This may be due to an empty folder. Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                            elif acls_changed == -4:
+                                    queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Aborted', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted due to user error correction in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                            else:
+                                    queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                        else:
+                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Done', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed in " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                        logging.info("!!!!! Queue update SQL: "+queue_comp)
+                        cursor.execute(queue_comp)
+                        cnxn.commit()
+                        logging.info("!!!!! Queue update completed: "+queue_comp)
+
+                        
+                except pyodbc.DatabaseError as err:
+                    cnxn.commit()
+                    sqlstate = err.args[1]
+                    sqlstate = sqlstate.split(".")
+                    logging.error('Error message: '.join(sqlstate))
+                #except Exception as e:
+                #    logging.error('Error in line ' + str(sys.exc_info()[-1].tb_lineno) + ' occured when trying to process ACL work items:')
+                #    queue_upd = "update " + dbschema + ".policy_transactions set trans_status = 'Queued', trans_reason = concat(trans_reason,'Requeuing due to error: " + e + "') where id = "+str(result["id"])
+                #    cursor.execute(queue_upd)
+                #    cnxn.commit()
+                #    #potentially try to add the item back on the queue here
+                else:
+                    cnxn.commit()
+                    #print('Done')
+                finally:
+                    cnxn.autocommit = True
+            else:
+                logging.error('Transaction ' + str(result["id"]) + ' in Abort state. Ignoring...') # This item will be removed from the queue as no error has been thrown i.e. will not end up in poison queue
                 
-        except pyodbc.DatabaseError as err:
-            cnxn.commit()
-            sqlstate = err.args[1]
-            sqlstate = sqlstate.split(".")
-            logging.error('Error message: '.join(sqlstate))
-        except Exception as e:
-            logging.error('Error in line ' + str(sys.exc_info()[-1].tb_lineno) + ' occured when trying to process ACL work items:' + str(e))
-            queue_upd = "update " + dbschema + ".policy_transactions set trans_status = 'Queued', trans_reason = concat(trans_reason,'Requeuing due to error: " + str(e) + "') where id = "+str(result["id"])
-            cursor.execute(queue_upd)
-            cnxn.commit()
-            #potentially try to add the item back on the queue here
-        else:
-            cnxn.commit()
-            #print('Done')
-        finally:
-            cnxn.autocommit = True
     else:
-      logging.error('Transaction ' + str(result["id"]) + ' in Abort state. Ignoring...')
-        
+        logging.error('Could not find transaction record with ID ' + str(result["id"]) + '. Please contact support')
+
 
 
 def getBearerToken(tenantid,resourcetype,spnid,spnsecret):
@@ -204,14 +211,12 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
     async def progress_callback(acl_changes):
         global user_error_abort 
         user_error_abort = False
-        dbname = "policystore" #os.environ["dbname"]
-        dbschema = "dbo" #os.environ["dbschema"]
         logging.info(("Transaction " + str(transid) + " in progress. In this batch: {} directories and {} files were processed successfully, {} failures were counted. " +
                 "In total, {} directories and {} files were processed successfully, {} failures were counted.")
                 .format(acl_changes.batch_counters.directories_successful, acl_changes.batch_counters.files_successful,
                         acl_changes.batch_counters.failure_count, acl_changes.aggregate_counters.directories_successful,
                         acl_changes.aggregate_counters.files_successful, acl_changes.aggregate_counters.failure_count))
-        connxstr=    connxstr=os.environ["DatabaseConnxStr"]
+        connxstr=os.environ["DatabaseConnxStr"]
         dbname = os.environ["dbname"]
         dbschema = os.environ["dbschema"]
         lcnxn = pyodbc.connect(connxstr)
@@ -228,7 +233,7 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
             raise Exception("Abort in progress transaction due to user correction")
         else:
             # if not in abort status then update with continuation token
-            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'InProgress', continuation_token = '" + str(acl_changes.continuation) + "',acl_count = "+str(acl_changes.aggregate_counters.files_successful) + ", last_updated = '"+ captureTime + "', trans_reason = 'Running for " + str(format(l1_stop-proc_start,'.3f')) + " seconds. ' where id = "+str(transid)
+            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'InProgress', continuation_token = '" + str(acl_changes.continuation) + "',acl_count = "+str(acl_changes.aggregate_counters.files_successful) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Running for " + str(format(l1_stop-proc_start,'.3f')) + " seconds. ') where id = "+str(transid)
             logging.info("!!!!! Queue update un progress SQL: "+queue_comp)
             lcursor.execute(queue_comp)
             lcnxn.commit()
