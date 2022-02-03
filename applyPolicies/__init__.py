@@ -31,6 +31,7 @@
 # 8 - modification: add accesses
 # 9 - modification: remove paths *
 # 10 - modification: add paths 
+# 11 - policy resync
 #
 # * means these transaction types need to be validated against business rules e.g. rule of maximum
 
@@ -53,6 +54,24 @@ from time import perf_counter
 from collections import defaultdict
 import json
 import typing
+import enum
+
+userExclusionsList = []
+groupExclusionsList = []
+tenantid=os.environ["tenantID"]
+spnid= os.environ.get('SPNID','')
+spnsecret= os.environ.get('SPNSecret','')
+basestorageuri = os.environ["basestorageendpoint"]
+dbname = os.environ["dbname"]
+dbschema = os.environ["dbschema"]
+principalsIncluded = defaultdict(list)
+principalOIDs  = defaultdict(list)
+
+class FilterType(enum.Enum):
+    User = 'users'
+    Group = 'groups'
+
+
 
 def main(mytimer: func.TimerRequest, msg: func.Out[typing.List[str]]) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(
@@ -65,7 +84,208 @@ def main(mytimer: func.TimerRequest, msg: func.Out[typing.List[str]]) -> None:
     getPolicyChanges()
     businessRuleValidation()
     storeQueueItems(msg)
+    processRecalc()
+    
    
+
+# Obtains a list of security princpals IDs. Calls getSPID which fetches the ID from AAD
+def getSPIDs(userslist, groupslist):
+    global exclusionCount
+    global allPrincipalsExcluded
+    global excludedPrincipals
+    global principalsIncluded
+    global principalOIDs 
+    global tenantid,spnid,spnsecret,basestorageuri,dbschema,dbname
+    exclusionCount=0
+    excludedPrincipals=[]
+
+    # Local function to removes principals from the list of principals found in the policy permmaplist.
+    def applyExclusions(vEntity,vExcludeEntities):
+        global exclusionCount
+        global excludedPrincipals
+
+        #exlusionlist = vExcludeEntities.split(',')
+        logging.info('Looking for exclusion: '+vEntity)
+        if vEntity:
+            for entity in vExcludeEntities:
+                if vEntity.lower() == entity.lower():
+                    logging.info("Principal " + vEntity.lower() + " found on exclusions list, therefore ignoring...")  
+                    exclusionCount+=1
+                    excludedPrincipals.append(vEntity)
+                    return None
+                else:
+                    logging.info("Principal " + vEntity + " not found on exclusions list") 
+            ##search for rule of maximum ie another policy which overrides this policy action
+            return vEntity
+
+    graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
+    spids = defaultdict(list) # a dictionary object of all the security principal (sp) IDs to be set in this ACL
+    totalValidUsers = 0
+    totalValidGroups = 0
+    # iterate through the comma separate list of groups and set the dictionary object
+    if userslist is not None and len(userslist)>0:
+        totalValidUsers = len(userslist)
+        #logging.info(str(userslist))
+        userentries = str(userslist).split(",")
+        for userentry in userentries:
+            #logging.info("user: "+userentry.strip("['").strip("']").strip(' '))
+            #logging.info('user entry before '+ userentry)
+            userentry = userentry.strip("[").strip("]").strip("'").strip(' ').strip("'")
+            logging.info('Obtaining user ID: '+userentry)
+            if userExclusionsList:
+                userentry = applyExclusions(userentry, userExclusionsList)
+            if userentry:                
+                principalsIncluded['userList'].append(userentry)
+                if principalOIDs['u'+userentry]:
+                    logging.info('OID dict is not null '+ str(principalOIDs['u'+userentry][0]))
+                    oid = principalOIDs['u'+userentry][0]
+                else:
+                    oid = getSPID(graphtoken,userentry,'users')
+                    principalOIDs['u'+userentry].append(oid)
+
+                logging.info('OID is '+str(oid))
+                if oid!='':
+                    logging.info("Returned spid : "+oid + " for "+ userentry) 
+                    spids['user'].append(oid)
+
+
+    # iterate through the comma separate list of groups and set the dictionary object
+    if groupslist is not None and len(groupslist)>0:
+        totalValidGroups = len(groupslist)
+        groupentries = str(groupslist).split(",")
+        for groupentry in groupentries:
+            groupentry = groupentry.strip("[").strip("]").strip("'").strip(' ').strip("'")
+            if groupExclusionsList:
+                groupentry = applyExclusions(groupentry, groupExclusionsList)
+            if groupentry:                
+                principalsIncluded['groupList'].append(groupentry)
+                if principalOIDs['g'+groupentry]:
+                    oid = principalOIDs['g'+groupentry][0]
+                else:
+                    oid = getSPID(graphtoken,groupentry,'groups')
+                    principalOIDs['g'+groupentry].append(oid)
+
+                if oid!='':
+                    spids['group'].append(oid)
+
+
+    logging.info(str(exclusionCount) + '=' + str(totalValidGroups) + ' + ' + str(totalValidUsers))
+    if (exclusionCount == totalValidGroups + totalValidUsers):
+        logging.info('No remaining principals left as they were all matched to the exclusion list')
+        allPrincipalsExcluded = 1
+    else:
+        allPrincipalsExcluded = 0
+    return spids
+
+def captureTransaction(cursor,transaction,transmode, adlpath, spids, pPolicyID, lpermstr, ptranstype, permmap, repo_name):
+    #global allPrincipalsExcluded
+
+    transStatus ='Validate' # assume transaction is going to be executed until it fails one of the validation steps
+    transReason = '' # valid until proven otherwise
+    request_path =''
+    http_path = ''
+    if (transmode=='modify' and spids and lpermstr) or (transmode=='remove' and spids): # only obtain the ACE entry if the parameters are valid for that specific transmode ie. modify needs both spids and perms and remove only needs spids
+        acentry = spidsToACEentry(spids,lpermstr)
+    else:
+        acentry = ''
+    logging.info("Ace entry "+ str(acentry))
+    if acentry is None or acentry =='':
+        transStatus = 'Ignored'
+
+        if allPrincipalsExcluded == 1:
+            transReason = 'All principals excluded. Principals excluded: '+ ','.join(excludedPrincipals) + '.Permissions: '+lpermstr
+            logging.info("No permissions could be set as all principals were on the exclusion list! Principals excluded: "+ ",".join(excludedPrincipals) + ".Permissions: "+lpermstr)    
+        else:
+            transReason = 'No AAD principals supplied. Check previous error messages but they may not have been found in AAD. Permissions string was '+lpermstr  
+            logging.warning("No permissions could be set as access control entry is invalid, either does not contain principals or permissions!")    
+
+    else:
+        if len(excludedPrincipals)>0:
+            transReason = 'Some principals were excluded due to the exclusion list. Principals excluded: '+ ','.join(excludedPrincipals) + '.Permissions: '+lpermstr
+            logging.info("Some principals were on the exclusion list! Principals excluded: "+ ",".join(excludedPrincipals) + ".Permissions: "+lpermstr)    
+
+
+    if adlpath is None:
+        transStatus = 'Ignored'
+        transReason = 'ADLS path is null'
+        logging.error("No storage path obtained for policy "+ str(pPolicyID)+": " + repo_name)
+    else:
+        if adlpath.find("abfs")>=0: # path contains full storage endpoint and resource therefore need to rearrange this 
+            pathstr = adlpath.lstrip("['").rstrip("']")
+            pathstr = pathstr.replace("abfs://","")
+            urlparts = pathstr.split("@")
+            contname = urlparts[0]
+            pathparts = urlparts[1].split("/",1)
+            accname = pathparts[0]
+            tgtpath = pathparts[1]
+            storageuri = ''
+            http_path = 'https://'+accname+'/'+contname+'/'+tgtpath
+            logging.info("Storage path set to "+http_path)
+        elif adlpath.find("hdfs")>=0:
+            # if this is the default hive warehouse location then transform into the ADLS location
+            http_path =  adlpath[adlpath.find("/warehouse")+10:]
+            storageuri = basestorageuri
+        else:
+            storageuri = basestorageuri
+        request_path = storageuri+http_path
+
+    now =  datetime.datetime.utcnow()
+    captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
+    transinsert = "insert into " + dbschema + ".policy_transactions (policy_id, repositoryName, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason, all_principals_excluded,principals_excluded,exclusion_list,principals_included, adl_permission_str, permission_json) " \
+                    " values ('" + str(pPolicyID) + "','" + repo_name + "','" + request_path  + "','" + adlpath + "','" + transaction + "','" + transmode + "','" + acentry + "','"+ captureTime + "','" + str(ptranstype) + "','" + transStatus + "','" + transReason + "'," +str(allPrincipalsExcluded) + ",'" \
+                    "" + ','.join(excludedPrincipals)+"','"+','.join(userExclusionsList)+','.join(groupExclusionsList)+"','" + json.dumps(principalsIncluded) +"','" +  lpermstr + "','" + json.dumps(permmap) + "')"
+    logging.info("Capturing transaction: "+transinsert)
+    cursor.execute(transinsert)
+
+def syncPolicy(cursor,pPolicyId,pResources,pPermMapList,pTableNames,pTableType,pTables,pRepositoryName):
+                    # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+                    hdfsentries = pResources.strip("path=[").strip("[").strip("]").split(",")
+
+                   #Load the json string of permission mappings into a dictionary object
+                    permmaplist = json.loads(pPermMapList)
+                    tableNames = json.loads(pTableNames)
+
+                    for permap in permmaplist: #this loop iterates through each permMapList and applies the ACLs
+                        for perm in permap["permList"]:
+                            logging.info("Permission: "+perm)
+                        # determine the permissions rwx
+                        permstr = getPermSeq(permap["permList"])    
+                        logging.info("perm str is now "+permstr)
+                        permstr = permstr.ljust(3,'-')
+                        logging.info("Permissions to be set: " +permstr)
+                        for groups in permap["groupList"]:
+                            logging.info("Groups: " + groups)
+                        for userList in permap["userList"]:
+                            logging.info("Users: " + userList)
+
+                        # obtain a list of all security principals
+                        spids = getSPIDs(permap["userList"],permap["groupList"])
+
+                        if pTableType == 'Exclusion' and pTables != '*': # process at table level
+                            logging.warning("***** Table exclusion list in policy detected")
+                            tablesToExclude = pTables.split(",")
+                            # iterate through the array of tables for this database
+                            for tblindb in tableNames:
+                                isExcluded = False  # assume not excluded until there is a match
+                                for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                                    logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                    if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                                        isExcluded = True
+                                        logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                if not isExcluded:
+                                    logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,pPolicyId,permstr,11,permap["permList"], pRepositoryName)
+
+                            # if not a match to tables in the exclusion list then 
+                            # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
+                        else: #capture entry as normal at the database level
+                            for hdfsentry in hdfsentries:
+                                hdfsentry = hdfsentry.strip().strip("'")
+                                logging.info("Capturing transaction for path: " + hdfsentry)
+                                captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,pPolicyId,permstr,11,permap["permList"],pRepositoryName)
+
+
+
 
 def getPolicyChanges():
 
@@ -74,138 +294,7 @@ def getPolicyChanges():
         if aclCount < 0: errorflag = aclCount  # any other reason may not necessarily be an error but either the stage variable was set to non-live or all users/groups were excluded
 
 
-    # Obtains a list of security princpals IDs. Calls getSPID which fetches the ID from AAD
-    def getSPIDs(userslist, groupslist):
-        global exclusionCount
-        global allPrincipalsExcluded
-        global excludedPrincipals
-        global principalsIncluded
-        exclusionCount=0
-        excludedPrincipals=[]
-        principalsIncluded = defaultdict(list)
-        # Local function to removes principals from the list of principals found in the policy permmaplist.
-        def applyExclusions(vEntity,vExcludeEntities):
-            global exclusionCount
-            global excludedPrincipals
 
-            #exlusionlist = vExcludeEntities.split(',')
-            logging.info('Looking for exclusion: '+vEntity)
-            if vEntity:
-                for entity in vExcludeEntities:
-                    if vEntity.lower() == entity.lower():
-                        logging.info("Principal " + vEntity.lower() + " found on exclusions list, therefore ignoring...")  
-                        exclusionCount+=1
-                        excludedPrincipals.append(vEntity)
-                        return None
-                    else:
-                        logging.info("Principal " + vEntity + " not found on exclusions list") 
-                ##search for rule of maximum ie another policy which overrides this policy action
-                return vEntity
-
-        spids = defaultdict(list) # a dictionary object of all the security principal (sp) IDs to be set in this ACL
-        totalValidUsers = 0
-        totalValidGroups = 0
-        # iterate through the comma separate list of groups and set the dictionary object
-        if userslist is not None and len(userslist)>0:
-            totalValidUsers = len(userslist)
-            logging.info(str(userslist))
-            userentries = str(userslist).split(",")
-            for userentry in userentries:
-                #logging.info("user: "+userentry.strip("['").strip("']").strip(' '))
-                logging.info('user entry before '+ userentry)
-                userentry = userentry.strip("[").strip("]").strip("'").strip(' ').strip("'")
-                logging.info('Obtaining user ID: '+userentry)
-                if userExclusionsList:
-                  userentry = applyExclusions(userentry, userExclusionsList)
-                if userentry:                
-                    principalsIncluded['userList'].append(userentry)
-                    spnid = getSPID(graphtoken,userentry,'users')
-                    if spnid is not None:
-                        spids['user'].append(spnid)
-
-        # iterate through the comma separate list of groups and set the dictionary object
-        if groupslist is not None and len(groupslist)>0:
-            totalValidGroups = len(groupslist)
-            groupentries = str(groupslist).split(",")
-            for groupentry in groupentries:
-                groupentry = groupentry.strip("[").strip("]").strip("'").strip(' ').strip("'")
-                if groupExclusionsList:
-                  groupentry = applyExclusions(groupentry, groupExclusionsList)
-                if groupentry:                
-                    principalsIncluded['groupList'].append(groupentry)
-                    spnid = getSPID(graphtoken,groupentry,'groups')
-                    if spnid is not None:
-                      spids['group'].append(spnid)
-
-        logging.info(str(exclusionCount) + '=' + str(totalValidGroups) + ' + ' + str(totalValidUsers))
-        if (exclusionCount == totalValidGroups + totalValidUsers):
-          logging.info('No remaining principals left as they were all matched to the exclusion list')
-          allPrincipalsExcluded = 1
-        else:
-          allPrincipalsExcluded = 0
-        return spids
-   
-    def captureTransaction(cursor,transaction,transmode, adlpath, spids, pPolicyID, lpermstr, ptranstype, permmap):
-        global allPrincipalsExcluded
-        #global userExclusionsList
-        #global groupExclusionsList
-
-
-        transStatus ='Validate' # assume transaction is going to be executed until it fails one of the validation steps
-        transReason = '' # valid until proven otherwise
-        request_path =''
-        http_path = ''
-        if (transmode=='modify' and spids and lpermstr) or (transmode=='remove' and spids): # only obtain the ACE entry if the parameters are valid for that specific transmode ie. modify needs both spids and perms and remove only needs spids
-            acentry = spidsToACEentry(spids,lpermstr)
-        else:
-            acentry = ''
-
-        if acentry is None or acentry =='':
-            transStatus = 'Ignored'
-
-            if allPrincipalsExcluded == 1:
-              transReason = 'All principals excluded. Principals excluded: '+ ','.join(excludedPrincipals) + '.Permissions: '+lpermstr
-              logging.info("No permissions could be set as all principals were on the exclusion list! Principals excluded: "+ ",".join(excludedPrincipals) + ".Permissions: "+lpermstr)    
-            else:
-              transReason = 'No AAD principals supplied. Check previous error messages but they may not have been found in AAD. Permissions string was '+lpermstr  
-              logging.warning("No permissions could be set as access control entry is invalid, either does not contain principals or permissions!")    
-
-        else:
-            if len(excludedPrincipals)>0:
-              transReason = 'Some principals were excluded due to the exclusion list. Principals excluded: '+ ','.join(excludedPrincipals) + '.Permissions: '+lpermstr
-              logging.info("Some principals were on the exclusion list! Principals excluded: "+ ",".join(excludedPrincipals) + ".Permissions: "+lpermstr)    
-
-
-        if adlpath is None:
-            transStatus = 'Ignored'
-            transReason = 'ADLS path is null'
-            logging.error("No storage path obtained for policy "+ str(row.id)+": " + row.Name)
-        else:
-            if adlpath.find("abfs")>=0: # path contains full storage endpoint and resource therefore need to rearrange this 
-                pathstr = adlpath.lstrip("['").rstrip("']")
-                pathstr = pathstr.replace("abfs://","")
-                urlparts = pathstr.split("@")
-                contname = urlparts[0]
-                pathparts = urlparts[1].split("/",1)
-                accname = pathparts[0]
-                tgtpath = pathparts[1]
-                storageuri = ''
-                http_path = 'https://'+accname+'/'+contname+'/'+tgtpath
-                logging.info("Storage path set to "+http_path)
-            if adlpath.find("hdfs")>=0:
-                # if this is the default hive warehouse location then transform into the ADLS location
-                http_path =  adlpath[adlpath.find("/warehouse")+10:]
-                storageuri = basestorageuri
-            else:
-                storageuri = basestorageuri
-            request_path = storageuri+http_path
-
-        captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
-        transinsert = "insert into " + dbschema + ".policy_transactions (policy_id, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason, all_principals_excluded,principals_excluded,exclusion_list,principals_included, adl_permission_str, permission_json) " \
-                      " values ('" + str(pPolicyID) + "','" + request_path  + "','" + adlpath + "','" + transaction + "','" + transmode + "','" + acentry + "','"+ captureTime + "','" + str(ptranstype) + "','" + transStatus + "','" + transReason + "'," +str(allPrincipalsExcluded) + ",'" \
-                      "" + ','.join(excludedPrincipals)+"','"+','.join(userExclusionsList)+','.join(groupExclusionsList)+"','" + json.dumps(principalsIncluded) +"','" +  lpermstr + "','" + json.dumps(permmap) + "')"
-        logging.info("Capturing transaction: "+transinsert)
-        cursor.execute(transinsert)
 
 
     # utility functions to determine differences in lists
@@ -239,14 +328,12 @@ def getPolicyChanges():
 
 
     connxstr=os.environ["DatabaseConnxStr"]
-    dbname = os.environ["dbname"]
-    dbschema = os.environ["dbschema"]
-    tenantid=os.environ["tenantID"]
-    spnid= os.environ["SPNID"]
-    spnsecret= os.environ["SPNSecret"]
-    basestorageuri = os.environ["basestorageendpoint"]
-    userExclusionsList = []
-    groupExclusionsList = []
+
+    global dbschema
+    global basestorageuri
+    global userExclusionsList
+    global groupExclusionsList
+
     errorflag=0
     #allPrincipalsExcluded = 0
     exclusionCount=0
@@ -254,12 +341,14 @@ def getPolicyChanges():
     cnxn = pyodbc.connect(connxstr)
 
     try:
+            userExclusionsList =[]
+            groupExclusionsList =[]
             # configure database params
             # connxstr=os.environ["DatabaseConnxStr"]
             appname = 'applyPolicies'
             targettablenm = "ranger_policies"
             batchsize = 200
-            params = urllib.parse.quote_plus(connxstr+'Database='+dbname +';')
+            #params = urllib.parse.quote_plus(connxstr+'Database='+dbname +';')
             #collist = ['ID','Name','Resources','Groups','Users','Accesses','Service Type','Status']
             #ID,Name,Resources,Groups,Users,Accesses,Service Type,Status
 
@@ -331,7 +420,7 @@ def getPolicyChanges():
                    #end_lsn = row[1]
                    #cursor.cancel() 
             changessql = changessql + """            
-            select [__$operation],[id],[Name],coalesce(resources,paths) Resources,[Status],replace(permMapList,'''','"') permMapList,[Service Type],tables,table_type,table_names 
+            select [__$operation],[id],[Name],coalesce(resources,paths) Resources,[Status],replace(permMapList,'''','"') permMapList,[Service Type],tables,table_type,table_names, repositoryName
             from cdc.fn_cdc_get_all_changes_""" + dbschema + """_""" + targettablenm  + """(@from_lsn, @to_lsn, 'all update old') 
             order by id,__$seqval,__$operation;"""
 
@@ -368,9 +457,9 @@ def getPolicyChanges():
             # CDC operation 3 is the before image of the row, operation 4 is the after (current) image.
             updatesdf = changesdf[(changesdf['__$operation']==3) |(changesdf['__$operation']==4)]
 
-            if not (insertdf.empty and updatesdf.empty and deleteddf.empty): # if there are either inserts or updates then only get tokens
+            #if not (insertdf.empty and updatesdf.empty and deleteddf.empty): # if there are either inserts or updates then only get tokens
                 #storagetoken = getBearerToken(tenantid,"storage.azure.com",spnid,spnsecret)
-                graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
+                #graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
 
             #################################################
             #                                               #
@@ -386,7 +475,7 @@ def getPolicyChanges():
                 logging.info("\n")
 
                 # iterate through the new policy rows
-                for row in insertdf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names']].itertuples():
+                for row in insertdf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names','repositoryName']].itertuples():
                     
                     if row.Status in ('Enabled','True') : 
 
@@ -426,7 +515,7 @@ def getPolicyChanges():
                                           logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
                                   if not isExcluded:
                                     logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,row.id,permstr,1,permap["permList"])
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,row.id,permstr,1,permap["permList"], row.repositoryName)
 
                               # if not a match to tables in the exclusion list then 
                                 # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
@@ -434,9 +523,9 @@ def getPolicyChanges():
                                 for hdfsentry in hdfsentries:
                                     hdfsentry = hdfsentry.strip().strip("'")
                                     logging.info("Passing path: " + hdfsentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,row.id,permstr,1,permap["permList"])
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,row.id,permstr,1,permap["permList"],row.repositoryName)
 
-            elif not deleteddf.empty:
+            if not deleteddf.empty:
             #################################################
             #                                               #
             #               Deleted Policies                #
@@ -449,7 +538,7 @@ def getPolicyChanges():
                 logging.info("\n")
 
                 # iterate through the deleted policy rows
-                for row in deleteddf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names']].itertuples():
+                for row in deleteddf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names','repositoryName']].itertuples():
                     
                     if row.Status in ('Enabled','True'): # only bother deleting ACLs where the policy was in an enabled state
 
@@ -485,7 +574,7 @@ def getPolicyChanges():
                                           logging.info("***** Table " + tblindb + " is to be excluded from ACLs")
                                   if not isExcluded:
                                     logging.info("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', tableNames[tblindb],spids,row.id,'',2,'')
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', tableNames[tblindb],spids,row.id,'',2,'',row.repositoryName)
 
 
                               # if not a match to tables in the exclusion list then 
@@ -496,12 +585,9 @@ def getPolicyChanges():
                                     hdfsentry = hdfsentry.strip().strip("'")
                                     # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
                                     logging.info("Removing ACLs from deleted policy for path: " + hdfsentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', hdfsentry,spids,row.id,'',2,'')
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', hdfsentry,spids,row.id,'',2,'',row.repositoryName)
 
-            else:
-                logging.info("No new or deleted policies detected. ")
-
-            logging.info("Determining any other changes...")
+            #logging.info("Determining any other changes...")
 
             #################################################
             #                                               #
@@ -533,7 +619,7 @@ def getPolicyChanges():
                 accessesafter = []
                 statusbefore = ''
                 statusafter = ''
-                aclsForAllPathsSet = False #this variable is an modified policy optimisation - for example if the changes included a new permisssion and simultaneously a new path/database was added there is no need to do these both as there would be duplication so we set a flag when one is done to avoid doing the other
+                #aclsForAllPathsSet = False #this variable is an modified policy optimisation - for example if the changes included a new permisssion and simultaneously a new path/database was added there is no need to do these both as there would be duplication so we set a flag when one is done to avoid doing the other
 
                 # Comment: 11b
                 # Fetch the first and last row of changes for a particular ID. This is because we are only concerned with the before 
@@ -546,23 +632,28 @@ def getPolicyChanges():
                     #print("Resource changes....")
                     #print(firstandlastforid.get(key = 'Resources'))
                     #print(tabulate(updatesdf, headers='keys', tablefmt='presto'))
-                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]] is not None:
-                        resourcesbefore = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]])
-                    else:
-                        resourcesbefore = ''
                     if firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]] is not None:
                         resourcesafter = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]])
                     else:
                         resourcesafter =  ''
-                    if  firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]] is not None:
-                        tableNamesBefore = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]])
+
+                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]] is not None:
+                        resourcesbefore = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]])
                     else:
-                        tableNamesBefore = ''
+                        resourcesbefore = resourcesafter # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
+                                                         # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
+
 
                     if firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]] is not None:
                         tableNamesAfter = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]])
                     else:
                         tableNamesAfter = ''
+
+                    if  firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]] is not None:
+                        tableNamesBefore = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.head(1).index[0]])
+                    else:
+                        tableNamesBefore = tableNamesAfter
+
                     
                 elif row['Service Type']=='hdfs':
                     resourcesbefore = firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]].split(",")
@@ -578,8 +669,17 @@ def getPolicyChanges():
                 statusafter = firstandlastforid.get(key = 'Status')[firstandlastforid.tail(1).index[0]].strip()
 
                 # load the permMapList into a json aray
-                permMapBefore = json.loads(firstandlastforid.get(key = 'permMapList')[firstandlastforid.head(1).index[0]])
-                permMapAfter = json.loads(firstandlastforid.get(key = 'permMapList')[firstandlastforid.tail(1).index[0]])
+                if firstandlastforid.get(key = 'permMapList')[firstandlastforid.tail(1).index[0]] is not None:
+                    permMapAfter = json.loads(firstandlastforid.get(key = 'permMapList')[firstandlastforid.tail(1).index[0]])
+                else:
+                    permMapAfter =''
+
+                if firstandlastforid.get(key = 'permMapList')[firstandlastforid.head(1).index[0]] is not None:
+                    permMapBefore = json.loads(firstandlastforid.get(key = 'permMapList')[firstandlastforid.head(1).index[0]])
+                else:
+                    permMapBefore = permMapAfter # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
+                                                         # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
+
 
                 # obtain the length of each array and then get the max - this will be the number of iterations that we are comparing for changes. any index that is out of bounds is essentially a delete operation because it has been removed
                 maplistcountbefore = len(permMapBefore)
@@ -597,10 +697,13 @@ def getPolicyChanges():
                     tableListBefore =  firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
                 else:
                     tableListBefore=''
+
                 if firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]] is not None:
                     tableListAfter = firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]].strip("[").strip("]").split(",")
                 else:
-                    tableListAfter=''
+                    tableListAfter=tableListBefore  # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
+                                                         # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
+
                 if tableTypeBefore != tableTypeAfter and tableTypeAfter == 'Exclusion' and tableListAfter[0] != "*": 
                     tableExclusionSet = True
                 else: 
@@ -613,6 +716,8 @@ def getPolicyChanges():
 
 
                 # iterate through the permaplist array
+                # maplistmax sets the upper bound of the number of elements in this array because there can be multiple allow conditions set in ranger
+                # so we need to loop through each of them and process the changes independently 
                 for n in range(0,maplistmax):
                     accessesbefore = ''
                     groupsbefore = ''
@@ -705,7 +810,7 @@ def getPolicyChanges():
                             for resourceentry in resourcesafter:
                                 resourceentry = resourceentry.strip().strip("'")
                                 logging.info("Passing path: " + resourceentry)
-                                captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,3,accessesafter)
+                                captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,3,accessesafter,row.repositoryName)
 
 
                         if statusafter not in ('Enabled','True'): # a disabled policy is treated in the same way as a deleted policy
@@ -722,17 +827,36 @@ def getPolicyChanges():
                                 # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
                                 spids = getSPIDs(usersafter,groupsafter)
                                 logging.info("Passing path: " + resourceentry)
-                                captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',4,accessesafter)
+                                captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',4,accessesafter,row.repositoryName)
 
 
                     elif statusafter in ('Enabled','True'): # if there wasn't a status change, then only bother dealing with modifications is the policy is set to enabled i.e. we don't care about policies that were disabled prior to the change and are still not enabled. when / if they are eventually enabled they will be treated as any new policy would
 
                         # check for new or modified hive objects which will result in a change in paths to add ACLs to. 
-                        addresources = entitiesToAdd(resourcesbefore,resourcesafter)
-                        removeresources = entitiesToRemove(resourcesbefore,resourcesafter)   
+                        if resourcesbefore != '':
+                            addresources = entitiesToAdd(resourcesbefore,resourcesafter)
+                            removeresources = entitiesToRemove(resourcesbefore,resourcesafter)   
+                        #
 
                         # process incremental changes to groups, users, accesses or resources if there wasn't a status change above which would take care of these for a specific policy
-                        if addgroups or addusers or removegroups or removeusers or removeaccesses or addaccesses or removeresources or addresources or tableExclusionSet or tableExclusionRemoved: 
+                        if addgroups or addusers or removegroups or removeusers or removeaccesses or addaccesses or tableExclusionSet or tableExclusionRemoved or addresources or removeresources: 
+
+                            if removeresources:
+
+                                spids = getSPIDs(usersbefore,groupsbefore)
+
+                                for resourcetoremove in removeresources:
+                                    resourcetoremove = resourcetoremove.strip().strip("'")
+                                    logging.info("Removing ACLs from deleted directory path: " + resourcetoremove)
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesafter,row.repositoryName)
+
+                            if addresources:
+                                logging.info("add the new permissions to the following resources")
+                                spids = getSPIDs(usersafter,groupsafter)
+                                for resourcetoadd in addresources:
+                                    resourcetoadd = resourcetoadd.strip().strip("'")
+                                    logging.info("Adding ACLs to new directory path: " + resourcetoadd)
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourcetoadd,spids,row.id,permstr,10,accessesafter,row.repositoryName)
 
                             if tableExclusionSet:
                                 #now remove just the ACLs for the paths of the excluded tables
@@ -766,7 +890,7 @@ def getPolicyChanges():
                                     # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
                                     spids = getSPIDs(removeusers,removegroups)
                                     logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',5,accessesafter)                                    
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',5,accessesafter,row.repositoryName)                                    
                                     #if resourceentry:
                                     #    logging.info('calling bulk remove per directory path')
                                     #    acls_changed += removeADLSBulkPermissions(basestorageuri,storagetoken, spids,  resourceentry)
@@ -792,7 +916,7 @@ def getPolicyChanges():
                                     resourceentry = resourceentry.strip().strip("'")
                                     #logging.info('Were all principals excluded? ' + str(allPrincipalsExcluded))
                                     logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,6,accessesafter)
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,6,accessesafter,row.repositoryName)
                                     #if resourceentry:
                                     #    logging.info('calling bulk set')
                                     #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
@@ -817,7 +941,7 @@ def getPolicyChanges():
                                 for resourceentry in resourcesafter:
                                     resourceentry = resourceentry.strip().strip("'")
                                     logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,7,removeaccesses)
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,7,removeaccesses,row.repositoryName)
                                     #if resourceentry:
                                     #    logging.info('calling bulk remove per directory path')
                                     #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
@@ -840,7 +964,7 @@ def getPolicyChanges():
                                 for resourceentry in resourcesafter:
                                     resourceentry = resourceentry.strip().strip("'")
                                     logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,8,addaccesses)
+                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,8,addaccesses,row.repositoryName)
                                     #if resourceentry:
                                     #    #logging.info('calling bulk set')
                                     #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
@@ -851,38 +975,6 @@ def getPolicyChanges():
                                     #    logging.warning("No storage path obtained for policy "+ str(rowid))
 
 
-                            if removeresources:
-
-                                spids = getSPIDs(usersbefore,groupsbefore)
-
-                                for resourcetoremove in removeresources:
-                                    resourcetoremove = resourcetoremove.strip().strip("'")
-                                    logging.info("Removing ACLs from deleted directory path: " + resourcetoremove)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesafter)
-                                    #if resourcetoremove:
-                                    #    logging.info(resourcetoremove)
-                                    #    acls_changed += removeADLSBulkPermissions(basestorageuri,storagetoken, spids, resourcetoremove)
-                                    #    acl_change_counter += acls_changed
-                                    #    if acls_changed==0:
-                                    #        errorflag=1
-                                    #else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
-
-                            if addresources:
-                                logging.info("add the new permissions to the following resources")
-                                spids = getSPIDs(usersafter,groupsafter)
-                                for resourcetoadd in addresources:
-                                    resourcetoadd = resourcetoadd.strip().strip("'")
-                                    logging.info("Adding ACLs to new directory path: " + resourcetoadd)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourcetoadd,spids,row.id,permstr,10,accessesafter)
-                                    #if resourcetoadd:
-                                    #    logging.info(resourcetoadd)
-                                    #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourcetoadd, permstr)
-                                    #    acl_change_counter += acls_changed
-                                    #    if acls_changed==0:
-                                    #        errorflag=1
-                                    #else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
 
 
                         else:
@@ -909,6 +1001,27 @@ def getPolicyChanges():
             else:
                 logging.error("Error detected during processing. Please see previous warnings or errors above for more information. Checkpoint will not be saved. Retry will occur during next run.")
         
+            params = urllib.parse.quote_plus(connxstr)
+
+            conn_str = 'mssql+pyodbc:///?odbc_connect={}'.format(params)
+            engine = create_engine(conn_str,echo=False)
+
+            # sql alchemy listener
+            @event.listens_for(engine, "before_cursor_execute")
+            def receive_before_cursor_execute(
+            conn, cursor, statement, params, context, executemany
+                ):
+                    if executemany:
+                        cursor.fast_executemany = True
+
+            # loading aad cache
+            tempdf = pd.DataFrame()
+            tempdf = pd.DataFrame(list(principalOIDs.items()),columns = ['AAD_principal_name','AAD_OID'])
+
+            logging.info("applyPolicies: Saving a copy of AAD principals into cache table")
+            #tempdf = tempdf.set_index('AAD_principal_name')
+            aadcachedf = pd.concat([tempdf.drop(columns='AAD_OID'),pd.DataFrame(tempdf['AAD_OID'].tolist(), columns=['AAD_OID'])],axis=1)
+            aadcachedf.to_sql("aad_cache",engine,index=False,if_exists="replace")
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -1042,12 +1155,21 @@ def getSPID(aadtoken, spname, spntype):
             logging.info("Found OID " + response["value"][0]["id"])
             return response["value"][0]["id"]
         else:
-            logging.info("Warning: Could not find user ID!!! Response: "+str(response))
-            # at this point should we aboort the process or just log the failure?? TBD by client
+            logging.info("Warning: Could not find user ID of "+spname+". Response: "+str(response))
+            if spname.strip().replace('#','%23') == 'nick.hurt': 
+                logging.info("Returning hard coded user OID")
+                return 'cb0c78ea-0032-411a-ae61-0c616d2560e8'
+            if spname.strip().replace('#','%23') == 'aramanath': 
+                logging.info("Returning hard coded user OID")
+                return '818c16bc-2ab3-41bd-bd7f-ea0124b931f0'
+
+            # at this point should we aboort the process or just log the failure?? TBD
             return None
-    elif r.status_code==403:
+    elif r.status_code>=400 and r.status_code<500:
         if spname.strip().replace('#','%23') == 'nick.hurt': return 'cb0c78ea-0032-411a-ae61-0c616d2560e8'
         if spname.strip().replace('#','%23') == 'aramanath': return '818c16bc-2ab3-41bd-bd7f-ea0124b931f0'
+        else:
+          logging.warning("Warning: Could not find user ID!!! Response: "+str(r.status_code) + ": "+r.text)
     else:
         logging.warning("Warning: Could not find user ID!!! Response: "+str(r.status_code) + ": "+r.text)
         # at this point should we aboort the process or just log the failure?? TBD by client
@@ -1058,9 +1180,9 @@ def spidsToACEentry(spids,permissions):
     aceentry = ""
     if spids:
         for sp in spids:
-            #logging.info('SPID' + str(spids[sp]))
+            logging.info('SPID' + str(spids[sp]))
             for spid in spids[sp]:
-                #logging.info("Preparing " + sp + ' permissions for ' + spid)
+                logging.info("Preparing " + sp + ' permissions for ' + spid)
                 if permissions:
                     aceentry += sp+':'+spid+ ':'+permissions+',default:'+sp+':'+spid + ':'+permissions +','
                 else: # the specification to remove ACLs doesn't require a perm str, only the SPID(s)
@@ -1086,31 +1208,73 @@ def getPermSeq(perms):
     logging.info('permstr to return='+lpermstr+'.')
     return lpermstr
 
-def getBearerToken(tenantid,resourcetype,spnid,spnsecret):
-    endpoint = 'https://login.microsoftonline.com/' + tenantid + '/oauth2/token'
 
+def getBearerToken(tenantid,resourcetype,spnid,spnsecret):
+    bearertoken = ''
+    endpoint = 'https://login.microsoftonline.com/' + tenantid 
+    #if spnid!='' and spnsecret!='':
+    endpoint = endpoint + '/oauth2/token'
+    #else:
+    #     endpoint = endpoint + '/MSI/token'  #if no service principal details then use managed identity
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    payload = 'grant_type=client_credentials&client_id='+spnid+'&client_secret='+ spnsecret + '&resource=https%3A%2F%2F'+resourcetype+'%2F'
-    #payload = 'resource=https%3A%2F%2F'+resourcetype+'%2F'
-    #logging.info(endpoint)
-    #logging.info(payload)
-    r = requests.post(endpoint, headers=headers, data=payload)
+
+    # if service principal auth then use client credentials flow
+    if spnid!='' and spnsecret!='':
+        endpoint = 'https://login.microsoftonline.com/' + tenantid 
+        endpoint = endpoint + '/oauth2/token'
+
+        payload = 'grant_type=client_credentials&client_id='+spnid+'&client_secret='+ spnsecret + '&'
+        payload = payload +'resource=https%3A%2F%2F'+resourcetype+'%2F'
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        r = requests.post(endpoint, headers=headers, data=payload)
+    else: #managed identity auth flow requires now client creds so just initialise this variable
+        endpoint = os.environ["IDENTITY_ENDPOINT"]
+        endpoint = endpoint +'?resource=https://'+resourcetype+'/&api-version=2019-08-01'
+        identity_header_val = os.environ["IDENTITY_HEADER"]
+        headers = {'X-IDENTITY-HEADER': identity_header_val}
+        #payload = 'resource=https%3A%2F%2F'+resourcetype+'&api-version=2019-08-01'
+        payload = ''
+        r = requests.get(endpoint, headers=headers)
+
+
+    logging.info('AAD request to endpoint ='+ endpoint + ' with payload = '+ payload )
+    logging.info(str(r))
     response = r.json()
     logging.info("Obtaining AAD bearer token for resource "+ resourcetype + "...")
     try:
       bearertoken = response["access_token"]
     except KeyError:
-      logging.info("Error obtaining bearer token: "+ response)
+      logging.error("Error coud not obtain bearer token, check identity has necessary permissions: "+ str(response))
     #logging.info(bearertoken)
     logging.info("Bearer token obtained.\n")
     return bearertoken
 
 def businessRuleValidation():
+    def policyCorrection(pCursor, pStatusFromStr, pStatusToStr,pReSyncBool):
+            trans_to_abort = """with trans as (
+                        select id,policy_id, trans_type, adl_path, principalexp.value principalval, principals_included,storage_url, 'userList' principal_type, permission_json, trans_status, repositoryName from policy_transactions pt cross apply OPENJSON(principals_included) with (users nvarchar(max) '$.userList' as json) cross APPLY OPENJSON(users) principalexp)
+                        select o.id,o.trans_status, t.id, o.policy_id,o.repositoryName, t.adl_path,o.adl_path,t.principalval, o.principalval from trans t inner join trans o on t.policy_id = o.policy_id and t.trans_status = 'Validate' and o.trans_status in ('Pending','Queued','De-queued','InProgress') and (t.trans_type in (""" + pStatusToStr + """) and o.trans_type ="""+ pStatusFromStr + """) """
+
+            cursor.execute(trans_to_abort)
+            transactions = cursor.fetchall()
+            logging.info("Determine whether any transactions in flight from " + pStatusFromStr + " to status " + pStatusToStr + "...")
+            if len(transactions) > 0:
+                logging.info("Policy corrections detected...")
+                for transaction_row in transactions:
+
+                  trans_abort  = """update policy_transactions set trans_status = 'Abort', trans_reason= concat(trans_reason,'Transaction aborted as user error correction detected in transaction """+ str(transaction_row[2]) + """') where id = """ + str(transaction_row[0])
+                  logging.info(trans_abort)
+                  cursor.execute(trans_abort)
+                  cnxn.commit() 
+                  if pReSyncBool and pStatusToStr in (5,9) and ((transaction_row[5] != transaction_row[6]) or (transaction_row[7] != transaction_row[8])): # only resync if there was a partial correction
+                     reSyncPolicy(transaction_row[3],transaction_row[4])
+
+                
     tenantid=os.environ["tenantID"]
     spnid=os.environ["SPNID"]
     spnsecret= os.environ["SPNSecret"]
     spids = defaultdict(list) # a dictionary object of all the security principal (sp) IDs to be set in this ACL
-
+    lPrincipalsIncluded = defaultdict(list) # a dictionary object to store the security principal (sp) being removed from the transaction in conflict and added to a new transaction entry
     def entitiesToRemove(beforelist, afterlist):
         return (list(set(beforelist) - set(afterlist)))                    
 
@@ -1120,8 +1284,42 @@ def businessRuleValidation():
     cnxn = pyodbc.connect(connxstr)
 
     try:
+            ##########################################
+            # User error correction detection 
+            # 
+            # Based on the following transaction states
+            # 1 - new policy
+            # 2 - deleted policy *
+            # 3 - modification: policy enabled
+            # 4 - modification: policy disabled *
+            # 5 - modification: remove principals *
+            # 6 - modification: add principals
+            # 7 - modification: remove accesses/permissions * 
+            # 8 - modification: add accesses
+            # 9 - modification: remove paths *
+            # 10 - modification: add paths 
+            # 11 - policy resync
+            # 
+            # - supports the following scenarios where one transaction is inflight (State=InProgress)
+            #            
+            # Scenario1: Policy deleted or disabled immediately after creation (complete correction or undecided)
+            # 1 -> 2 or 1 -> 4 or 3 -> 4 abort and allow to continue
+            #
+            # Scenario2: Principals, paths or accesses added after policy creation
+            # 1 -> 6 no correction needed, allow to continue 
+            #
+            # Scenario3: Principals, paths or access removed after policy creation 
+            # 1 -> 5 abort, apply remove and resync policy
+            # 
+            # Scenario4: Add principals, paths and then immediately remove them (add to remove ie. no permission string) (full or partial)
+            # 6 -> 5 or 10 -> 9 where principals/paths are the same then abort and allow remove to continue else abort, remove and resync
+            # 
+            # Scenario5: Add access then immediately remove them (modify to modify)
+            # 8 -> 7 Abort and resync
+            #
+            ###########################################
             appname = 'applyPolicies'
-            params = urllib.parse.quote_plus(connxstr+'Database='+dbname +';')
+            #params = urllib.parse.quote_plus(connxstr+'Database='+dbname +';')
             cursor = cnxn.cursor()
             cursorinner = cnxn.cursor()
             transcursor = cnxn.cursor()
@@ -1129,146 +1327,103 @@ def businessRuleValidation():
             now =  datetime.datetime.utcnow()
             progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
             new_trans_status = 'Pending'
-            # determine if there are any in flight transactions that should be aborted based on the fact that they are for the same policy id, but complete reversal of a transaction that is in progress
-            trans_to_abort = """with trans as (
-                                select id,policy_id, trans_type, adl_path, principalexp.value principalval, principals_included,storage_url, 'userList' principal_type, permission_json, trans_status from policy_transactions pt cross apply OPENJSON(principals_included) with (users nvarchar(max) '$.userList' as json) cross APPLY OPENJSON(users) principalexp)
-                                select o.id,o.trans_status, t.id from trans t inner join trans o on t.policy_id = o.policy_id and t.trans_status = 'Validate' and o.trans_status = 'InProgress' and t.trans_type =5 and o.trans_type =1 and t.adl_path = o.adl_path and t.principalval =  o.principalval"""
 
-            cursor.execute(trans_to_abort)
-            transactions = cursor.fetchall()
-            logging.info("Determine whether this is a policy correction...")
-            if len(transactions) > 0:
-                logging.info("Policy corrections detected...")
-                for transaction_row in transactions:
+ 
+            # Scenario1
+            policyCorrection(cursor,'1','4,2',False)
+            policyCorrection(cursor,'3','4',False)
+            # Scenario3
+            policyCorrection(cursor,'1','5',True)
+            # Scenario4
+            policyCorrection(cursor,'6','5',True) # need to cater for partial
+            policyCorrection(cursor,'10','9',True)
+            # Scenario5
+            policyCorrection(cursor,'8','7',True)
 
-                  trans_abort  = """update policy_transactions set trans_status = 'Abort', trans_reason= concat(trans_reason,'Transaction aborted as user error correction detected in transaction """+ str(transaction_row[2]) + """') where id = """ + str(transaction_row[0])
-                  logging.info(trans_abort)
-                  cursor.execute(trans_abort)
-                  cnxn.commit() 
-                  new_trans_status = 'Waiting'
-                  
+            ######################################
+            # Duplicate detection
+            #####################################
+            duplicate_trans ="""with trans as (
+                                select t.id,t.policy_id, t.repositoryName, o.id other_trans_id,o.policy_id other_trans_pol_id,o.repositoryName other_trans_repo_name
+                                from policy_transactions t inner join policy_transactions o on t.adl_path = o.adl_path and t.trans_action = o.trans_action and t.acentry = o.acentry and t.id <> o.id and t.trans_status = 'Validate' and o.trans_status='Validate'),
+                                mintrans as (select min(id) min_id from trans)
+                                update poltrans  set trans_status ='Duplicate',trans_reason = concat('Identified as duplicate of transaction',(select min_id from mintrans),' for policy ',t.policy_id,' from repository ',t.repositoryName) 
+                                from policy_transactions poltrans inner join trans  t on t.id = poltrans.id where t.id <> (select min(i.id) from trans i) """
+            logging.info("Looking for any transaction duplicates...")
+            transcursor.execute(duplicate_trans)
+            
+            #################################################################
+            # 
+            # Policy conflict detection (Rule of maximum)      
+            # 
+            # ###############################################################     
             #  determine which changes have matches to paths and principals elsewhere. if any fetch the paths, principals and policy ID(s) of the other policy/ies (in comma separated notation). The latter will be stored in the trans reason.
             # TODO add the inverse                                 union 
                                 #select distinct t.id,t.policy_id, t.trans_type, t.adl_path,  t.principalval, t.principals_included, stuff((select distinct ',' + cast(ps.id as varchar) for xml path ('')),1,1,'') as policylist, t.storage_url,principal_type,permission_json from trans t inner join policy_snapshot_by_path ps on  ps.adl_path like t.adl_path+'%'  and t.principalval = ps.principal and t.policy_id <> ps.id
             policy_conflicts = """with trans as (
-                                select id,policy_id, trans_type, adl_path, principalexp.value principalval, principals_included,storage_url, 'userList' principal_type, permission_json from policy_transactions pt cross apply OPENJSON(principals_included) with (users nvarchar(max) '$.userList' as json) cross APPLY OPENJSON(users) principalexp where trans_type in (2,4,5,7,9) and trans_status = 'Validate')
-                                select distinct t.id,t.policy_id, t.trans_type, t.adl_path,  t.principalval, t.principals_included, stuff((select distinct ',' + cast(ps.id as varchar) for xml path ('')),1,1,'') as policylist, t.storage_url,principal_type,permission_json from trans t inner join policy_snapshot_by_path ps on t.adl_path = replace(replace(ps.adl_path,'[''',''),''']','')   and t.principalval = ps.principal and t.policy_id <> ps.id """
+                                select id,policy_id, trans_type, storage_url adl_path, principalexp.value principalval, principals_included,storage_url, 'userList' principal_type, permission_json,repositoryName from policy_transactions pt cross apply OPENJSON(principals_included) with (users nvarchar(max) '$.userList' as json) cross APPLY OPENJSON(users) principalexp where trans_status = '1Validate')
+                                select distinct t.id,t.policy_id, t.trans_type, t.adl_path,  t.principalval, t.principals_included, max(ps.id) as policylist, t.storage_url,principal_type,permission_json,t.repositoryName from trans t inner join policy_snapshot_by_path ps on t.storage_url = replace(replace(ps.adl_path,'[''',''),''']','')   and t.principalval = ps.principal and concat(t.policy_id,t.repositoryName) <> concat(ps.id,ps.repositoryName)
+                                group by t.id,t.policy_id, t.trans_type, t.adl_path,  t.principalval, t.principals_included, t.storage_url,principal_type,permission_json,t.repositoryName """
 
-            ### TODO - another variation of this is where a policy match was found at a lower level. Need to honour the current transaction at the higher level recursively but insert a new transaction to apply the permissions at the lower level
+            # This query needs some explaination... it is broken into 3 parts. 
+            # 1st part (trans) explodes all in-flight transactions by principal and path. 
+            # 2nd part (transconflict) checks to see whether that principal has other policies for that path by doing a distinct count of repository name and policy ID
+            # 3rd part (maxperms) calculates the maximum permissions for all policies for that path for that principal
+            # final part converts the results from maxperms into ADLS permissions rwx and does a lookup for the AAD OID in the cache table
+            policy_optimiser = """
+                           with trans as
+                            (select id,policy_id, adl_permission_str, trans_type, adl_path, principalexp.value principalval, principals_included,storage_url, 'user' principal_type, permission_json, trans_status from policy_transactions pt cross apply OPENJSON(principals_included) with (users nvarchar(max) '$.userList' as json) cross APPLY OPENJSON(users) principalexp
+                            where trans_status ='Validate'
+                            union
+                            select id,policy_id, adl_permission_str, trans_type, adl_path, principalexp.value principalval, principals_included,storage_url, 'group' principal_type, permission_json, trans_status from policy_transactions pt cross apply OPENJSON(principals_included) with (groups nvarchar(max) '$.groupList' as json) cross APPLY OPENJSON(groups) principalexp
+                            where trans_status ='Validate'
+                            ),
+                            transconflict as
+                            (select tt.storage_url,tt.principal_type,pth.principal,min(tt.id) min_id,count(distinct concat(pth.ID,pth.RepositoryName)) totalstrans 
+                            from policy_snapshot_by_path pth inner join trans tt on tt.storage_url like pth.adl_path+'%'  and tt.principalval = pth.principal and tt.principal_type = pth.principal_type group by tt.storage_url,pth.principal,tt.principal_type having count(distinct concat(pth.ID,pth.RepositoryName))>1)
+                            select a.AAD_OID,t.principal,t.principal_type,t.storage_url,min(p.id) min_policy_id,
+                            concat(case when max(case when m.adls_perm='r' then 1 else 0 END) =1 then 'r' else '-' end,
+                            case when max(case when m.adls_perm='w' then 1 else 0 end) = 1 then 'w' else '-' end, 
+                            case when max(case when m.adls_perm='x' then 1 else 0 end) = 1 then  'x' else '-' end) adlsperm 
+                            from policy_snapshot_by_path p
+                            inner join perm_mapping m on p.permission = m.ranger_perm
+                            inner join transconflict t on t.storage_url  like p.adl_path+'%' and t.principal = p.principal
+                            inner join aad_cache a on concat(substring(t.principal_type,1,1) ,t.principal) = a.aad_principal_name
+                            group by a.AAD_OID,t.principal, t.principal_type,t.storage_url
+                            """
 
             #logging.info(policy_conflicts)
             trans_id = -1
-            cursor.execute(policy_conflicts)
+            cursor.execute(policy_optimiser)
             transactions = cursor.fetchall()
+            for transaction_row in transactions: #loop through the transaction above principal by principal where a potential conflict is found
+                    logging.info("Found policy transactions in conflict, removing principal "+ transaction_row[1] + " for storage url "+ transaction_row[3])
+                    trans_update ="""update policy_transactions set principals_excluded = trim(',' FROM principals_excluded+',""" + transaction_row[1] + """'), trans_status='Recalculate', 
+                                     trans_reason=concat(trans_reason,'... Principal """ + transaction_row[1] + """ excluded due to policy conflict. Recalculation of ACE entry required ...')
+                    where  storage_url = '""" + transaction_row[3] + """' and acentry like '%""" + transaction_row[0] + """%' and trans_status = 'Validate'"""
+                    logging.info(trans_update)
+                    transcursor.execute(trans_update)
+                    lPrincipalsIncluded[str(transaction_row[2]) + 'List'].append(transaction_row[1]) # used to populate the principals included field even though it is just a single pincipal
+                    spids[transaction_row[2]].append(transaction_row[0])
+                    permstr = transaction_row[5]
+                    acentry = spidsToACEentry(spids,permstr)
+                    transStatus = 'Pending'
+                    transReason = 'Transaction auto-generated due to policy conflicts (rule of maximum) for principal '+transaction_row[1] + ', path ' + transaction_row[2] + ', based on policy '+  str(transaction_row[3]) 
+                    captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
+                    trans_insert = "insert into " + dbschema + ".policy_transactions (policy_id, repositoryName, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason,adl_permission_str,permission_json, principals_included) " \
+                    " values ('" + str(transaction_row[4]) + "','Global','" + transaction_row[3]  + "','" + transaction_row[3] + "','" + 'setAccessControlRecursive' + "','" + 'modify' + "','" + acentry + "','"+ captureTime + "','7','" + transStatus + "','" + transReason + "','" + permstr+ "','','" + json.dumps(lPrincipalsIncluded) +"')"
+                    ## Future optimisation, adapt capturetransaction function to access trans_reason and ensure all global variables are reset
+                    ##captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,pPolicyId,permstr,7,'','Global')          
 
+                    logging.info(trans_insert)
+                    transcursor.execute(trans_insert)
+                    lPrincipalsIncluded[str(transaction_row[2]) + 'List'].remove(transaction_row[1]) # was temporarily assigned for storing the principals_included column above, now reset for the next iteration of this for loop
 
-            if len(transactions) > 0:
-                for transaction_row in transactions:
-                    logging.info("Transaction ID = "+str(transaction_row[0]) + " vs transid = "+str(trans_id))
-                    if trans_id != transaction_row[0]: #if this is the start of new transaction ID
-                        remaining_principals= ''
-                        principal_json = json.loads(transaction_row[5])
-                        try: 
-                            total_users = len(principal_json['userList'])
-                        except KeyError:
-                            total_users = 0
-                        try:
-                            total_groups = len(principal_json['groupList'])
-                        except KeyError:
-                            total_groups = 0
-                        total_principals = total_users + total_groups
-                        logging.info('total principals '+str(total_principals))
-
-                    if transaction_row[2] in (2,5,7):
-                        # find the difference between the current policy change and another policy with the same path for the current principal
-                        # TODO try a union of the the inverse of this like pattern to ensure we capture both sub and super sets of these matches
-                        policy_delta = """select trim(value) from policy_transactions CROSS APPLY STRING_SPLIT(replace(replace(replace(permission_json,'[',''),']',''),'"',''),',')  where id = """ + str(transaction_row[0]) + """
-                                        except 
-                                        select ps.permission from policy_snapshot_by_path ps where  '"""+ str(transaction_row[3] + """' = replace(replace(ps.adl_path,'[''',''),''']','') and ps.principal = '""" + str(transaction_row[4]) + """' and ps.id <> """ + str(transaction_row[1]))
-                        logging.info(policy_delta)
-                        cursorinner.execute(policy_delta)
-                        delta_rows = cursorinner.fetchall()
-                        if len(delta_rows)==0: # no differences with another policy already applying the same permissions we are about to take away in this change so simply ignore this change as rule of maximum applies
-                            logging.info("Rule of maximum: policy "+ str(transaction_row[6]) + " has a permission " + transaction_row[9].lstrip('[').rstrip(']') + " which was requested to be removed, therefore ignore this request...")
-                            if total_principals==1: # if there is only one principal in the change / transaction then mark this transaction as ignored because there was found to be a matching policy for this principal with the exact same set of permissions.
-                                principal_json[transaction_row[8]].remove(transaction_row[4])
-                                remaining_principals = json.dumps(principal_json)
-
-                                logging.info("There was only one principal remaining (now none) in this transaction which will now be ignored due to rule of maximum, therefore the entire transaction is set to ignored...")
-                                trans_update = """update policy_transactions set trans_status ='Ignored', principals_included = '"""+ remaining_principals+ """', principals_excluded = trim(',' from concat(principals_excluded,',','"""+ str(transaction_row[4]) + """')), trans_reason=concat(trans_reason,'Policy """ + str(transaction_row[6]) + """ overrides permissions that were to be removed on this path for principal """ + str(transaction_row[4]) +""". This transaction will now be ignored and any remaining changes (if any) will be applied in a sepearate transaction entry.') where id = """ + str(transaction_row[0])
-                                logging.info(trans_update)
-                                transcursor.execute(trans_update)
-                            else: # if not all the princpals were in the transaction then only remove the one in this specific cursor with a match to another policy
-                                logging.info("There are multiple principals in this transaction therefore only removing the current principal "+transaction_row[4] + " due to rule of maximum...")
-                                principal_json[transaction_row[8]].remove(transaction_row[4])
-                                remaining_principals = json.dumps(principal_json)
-                                # now recalculate the number of remaining principals and if none are left then mark the entire transaction as ignored
-                                try: 
-                                    total_users = len(principal_json['userList'])
-                                except KeyError:
-                                    total_users = 0
-                                try:
-                                    total_groups = len(principal_json['groupList'])
-                                except KeyError:
-                                    total_groups = 0
-                                total_principals = total_users + total_groups
-                                #logging.info(str(total_principals))
-                                #logging.info(str(remaining_principals))
-                                ## now check whether there are any principals remaining and if not set the entire transaction record to ignored. This might occur if there was more than one principal in the transaction but eventually all of them were removed as they matched to another policy
-                                if total_principals == 0:
-                                    trans_fix = """update policy_transactions set trans_status ='Ignored', trans_reason=concat(trans_reason,'Policy """ + str(transaction_row[6]) + """ overrides permissions that were to be removed on this path for this/these principals '""" 
-                                    + str(transaction_row[4]) +"""'. This transaction will be ignored and any remaining changes will be applied in a sepearate transaction entry (if any).') where id = """ + str(transaction_row[0]) 
-                                    logging.info(trans_fix)
-                                    #transcursor.execute(trans_fix)
-                                else: # there are still remaining prinipals
-                                    # remove the principals
-                                    ### recalculate means that we need to adjust the ACE entry and principals_included
-                                    trans_update = """update policy_transactions set trans_status ='Recalculate', principals_included = '"""+ remaining_principals+ """', principals_excluded = trim(',' from concat(principals_excluded,',','"""+ str(transaction_row[4]) + """')), trans_reason=concat(trans_reason,'....','Policy """ + str(transaction_row[6]) + """ overrides permissions that were to be removed on this path for principal """ + str(transaction_row[4]) +""" therefore this user was excluded.') where id = """ + str(transaction_row[0])
-                                    logging.info(trans_update)
-                                    transcursor.execute(trans_update)
-
-                        else: 
-                            ## TODO - need to apply the matched policy permissions rather than the difference as there is no remove ACLs process. i.e. run a new query here to determine what the permissions should be e.g. no longer have write permissions so just set read
-                            permissions = []
-                            #orig_perms =  """select permission from policy_snapshot_by_path where id =  """ + str(transaction_row[6]) + """
-                            for delta_row in delta_rows:
-                              permissions.append(delta_row[0])
-                            #permstr = getPermSeq('read') #permissions)
-                            #permstr = permstr.ljust(3,'-')
-                            permstr = 'r--'
-                            logging.info('new permission string ' + permstr)
-                            for delta_row in delta_rows:
-                                # only partial difference to another policy. if the permission we are trying to remove is = to the difference and if there is only one principal in this transaction then apply it otherwise remove the princpal and add a new transaction entry
-                                logging.info("Total principals "+ str(total_principals) + ", delta row "+delta_row[0] + ", req " + transaction_row[9].lstrip('["').rstrip('"]'))
-                                if total_principals>1 or delta_row[0] != transaction_row[9].lstrip('["').rstrip('"]'): # if there is more than one principal and the request is different to the another policy then remove this principal 
-                                    principal_json[transaction_row[8]].remove(transaction_row[4])
-                                    remaining_principals = json.dumps(principal_json)
-                                    trans_update = """update policy_transactions set trans_status ='Recalculate', principals_included = '"""+ remaining_principals + """',principals_excluded = trim(',' from concat(principals_excluded,',','"""+ str(transaction_row[4]) + """')), trans_reason=concat(trans_reason,'....','Policy """ + str(transaction_row[6]) + """ overrides some of the permissions that were to be removed on this path for principal """ + str(transaction_row[4]) +""" therefore this user was excluded. A new transaction will be created for the remaining permissions') where id = """ + str(transaction_row[0])
-                                    logging.info(trans_update)
-                                    transcursor.execute(trans_update)
-                                    graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
-                                    spnid =  getSPID(graphtoken,transaction_row[4],'users')
-                                    logging.info('user to set '+ spnid)
-                                    spids['user'].append(spnid)
-                                    acentry = spidsToACEentry(spids,permstr)
-                                    captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
-                                    transStatus = 'Pending'
-                                    transReason = 'Rule of maximum applied to user '+transaction_row[4] + ' as policy '+  str(transaction_row[6]) + ' had partial permissions.'
-                                    trans_insert = "insert into " + dbschema + ".policy_transactions (policy_id, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason) " \
-                                    " values ('" + str(transaction_row[0]) + "','" + transaction_row[7]  + "','" + transaction_row[3] + "','" + 'setAccessControlRecursive' + "','" + 'modify' + "','" + acentry + "','"+ captureTime + "','7','" + transStatus + "','" + transReason + "')"
-                                    logging.info(trans_insert)
-                                    transcursor.execute(trans_insert)
-                                else:
-                                    trans_update = """update policy_transactions set trans_status ='Pending', trans_reason=concat(trans_reason,'Policy """ + str(transaction_row[6]) + """ has different permissions to those being removed on this path for """+ str(transaction_row[4]) + """ therefore proceeding with the transaction requst...') where id = """ + str(transaction_row[0]) 
-                                    logging.info(trans_update)
-                                    transcursor.execute(trans_update)
-                    trans_id = transaction_row[0]
-            else: #there are no conflicting policies therefore these transaction should be queued
-                trans_update = """update policy_transactions set trans_status ='"""+ new_trans_status + """' where trans_status='Validate'"""
-                #logging.info(trans_update)
-                logging.info("Updating any other transactions not in conflict awaiting validation...")
-                transcursor.execute(trans_update)
-
+            trans_update = """update policy_transactions set trans_status ='"""+ new_trans_status + """' where trans_status='Validate'"""
+            #logging.info(trans_update)
+            logging.info("Updating any other transactions not in conflict awaiting validation...")
+            transcursor.execute(trans_update)
+            cnxn.commit()
     except pyodbc.DatabaseError as err:
             cnxn.commit()
             sqlstate = err.args[1]
@@ -1290,37 +1445,62 @@ def processRecalc():
     dbname = os.environ["dbname"]
     dbschema = os.environ["dbschema"]
     cnxn = pyodbc.connect(connxstr)
-    graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
+    #graphtoken = getBearerToken(tenantid,"graph.microsoft.com",spnid,spnsecret)
     try:
             cursor = cnxn.cursor()
             transcursor = cnxn.cursor()
-            policy_recalc = """select id,principals_included,principals_included, adl_permission_str from policy_transactions where trans_status = 'Recalculate'"""
+            policy_recalc = """select id,principals_excluded,principals_included, adl_permission_str from policy_transactions where trans_status = 'Recalculate'"""
             cursor.execute(policy_recalc)
             transactions = cursor.fetchall()
             for transaction_row in transactions:
               logging.info(json.dumps(transaction_row[2]))
               principals_json = json.loads(transaction_row[2])
+
+              #principals_json[transaction_row[8]].remove(transaction_row[4])
               try:
                 logging.info(principals_json['userList'])
                 for userentry in principals_json['userList']: #will be grouplist next time round
-                  spnid = getSPID(graphtoken,userentry,'users')
-                  if spnid is not None:
-                    spids['user'].append(spnid)
+                    for excludeprincipal in transaction_row[1].split():
+                        if userentry == excludeprincipal:
+                            principals_json['userList'].remove(excludeprincipal)
               except KeyError:
                   None
               try:
                 logging.info(principals_json['groupList'])
-                for userentry in principals_json['groupList']: 
-                  spnid = getSPID(graphtoken,userentry,'groups')
-                  if spnid is not None:
-                    spids['user'].append(spnid)
+                for groupentry in principals_json['groupList']: 
+                    for excludeprincipal in transaction_row[1].split(): 
+                        if groupentry == excludeprincipal:
+                            principals_json['groupList'].remove(excludeprincipal)
               except KeyError:
                   None
+              try: 
+                  total_users = len(principals_json['userList'])
+                  usersIncluded = principals_json['userList']
+              except KeyError:
+                  total_users = 0
+                  usersIncluded = None
+              try:
+                  total_groups = len(principals_json['groupList'])
+                  groupsIncluded = principals_json['groupList']
+              except KeyError:
+                  total_groups = 0
+                  groupsIncluded = None
+              total_principals = total_users + total_groups
+              logging.info('total principals '+str(total_principals))
 
-              acentry = spidsToACEentry(spids,transaction_row[3])   
-              logging.info("Ace entry is now : "+acentry)          
-              trans_update = """update policy_transactions set trans_status = 'Pending', acentry = '""" + acentry + """' where id = """ + str(transaction_row[0])
-              transcursor.execute(trans_update)
+              if total_principals>0:
+                spids = getSPIDs(usersIncluded,groupsIncluded)                  
+                acentry = spidsToACEentry(spids,transaction_row[3])   
+                logging.info("Ace entry is now : "+acentry)          
+                trans_update = """update policy_transactions set trans_status = 'Pending', principals_included ='""" + json.dumps(principals_json) + """', trans_reason = concat(trans_reason,'... ACE entry recalculated. '),acentry = '""" + acentry + """' where id = """ + str(transaction_row[0])
+                logging.info("Process recalc update: "+trans_update)
+                transcursor.execute(trans_update)
+              else: # no principals remaining
+                trans_update = """update policy_transactions set trans_status = 'Ignored', principals_included ='""" + json.dumps(principals_json) + """', trans_reason = concat(trans_reason,'... Transaction ignored as all principals were excluded due to policy conflicts.'),acentry = '' where id = """ + str(transaction_row[0])
+                logging.info("Process recalc update: "+trans_update)
+                transcursor.execute(trans_update)
+
+
     except pyodbc.DatabaseError as err:
             cnxn.commit()
             sqlstate = err.args[1]
@@ -1386,6 +1566,88 @@ def storeQueueItems(msg):
         finally:
             cnxn.autocommit = True"""
     #msg.set(list(json_data))
+
+def reSyncPolicy(policyID,repoName):
+    logging.info("Resyncing policy... " + str(policyID) + " - " + repoName)
+    connxstr=os.environ["DatabaseConnxStr"]
+    dbname = os.environ["dbname"]
+    dbschema = os.environ["dbschema"]
+    cnxn = pyodbc.connect(connxstr)
+    cursor = cnxn.cursor()
+    now =  datetime.datetime.utcnow()
+    progstarttime = now.strftime('%Y-%m-%d %H:%M:%S')
+    # note about the convert statements below, this is merely to convert the time value into the correct format for the fn_cdc_map_time_to_lsn function.
+    # either there will be no data in the ctl table (first run) and then all changes are scanned. otherwise there is a last checkpoint found. if this matches the maximum lsn of the database then no changes have happened since the last run ie do nother. otherwise scan for changes...
+    sql_txt = """select [id],[RepositoryName],[Name],coalesce(resources,paths) Resources,[Status],replace(permMapList,'''','"') permMapList,[Service Type],tables,table_type,table_names from ranger_policies where id = """ + str(policyID) + """ and repositoryName = '""" + str(repoName) + """' """
+
+    logging.info(sql_txt)
+    cursor.execute(sql_txt)
+    row = cursor.fetchone()
+
+
+    if row[4] in ('Enabled','True') : 
+        logging.info("Enabled, calling syncpolicy")
+        syncPolicy(cursor,row[0],row[3],row[5],row[9],row[8],row[7],row[1])    
+        cnxn.commit()
+
+        '''
+        # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
+        hdfsentries = row[3].strip("path=[").strip("[").strip("]").split(",")
+
+        #Load the json string of permission mappings into a dictionary object
+        permmaplist = json.loads(row[5])
+        tableNames = json.loads(row[9])
+
+        for permap in permmaplist: #this loop iterates through each permMapList and applies the ACLs
+            for perm in permap["permList"]:
+                logging.info("Permission: "+perm)
+            # determine the permissions rwx
+            permstr = getPermSeq(permap["permList"])    
+            logging.info("perm str is now "+permstr)
+            permstr = permstr.ljust(3,'-')
+            logging.info("Permissions to be set: " +permstr)
+            for groups in permap["groupList"]:
+                logging.info("Groups: " + groups)
+            for userList in permap["userList"]:
+                logging.info("Users: " + userList)
+
+            # obtain a list of all security principals
+            spids = getSPIDs(permap["userList"],permap["groupList"])
+
+            if row[8] == 'Exclusion' and row[7] != '*': # process at table level
+                logging.warning("***** Table exclusion list in policy detected")
+                tablesToExclude = row[7].split(",")
+                # iterate through the array of tables for this database
+                for tblindb in tableNames:
+                    isExcluded = False  # assume not excluded until there is a match
+                    for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                        logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                        if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                            isExcluded = True
+                            logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                    if not isExcluded:
+                        logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
+                        #captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,row.id,permstr,1,permap["permList"])
+                        #trans_insert = "insert into " + dbschema + ".policy_transactions (policy_id, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason) " \
+                        #    " values ('" + str(transaction_row[0]) + "','" + transaction_row[7]  + "','" + transaction_row[3] + "','" + 'setAccessControlRecursive' + "','" + 'modify' + "','" + acentry + "','"+ captureTime + "','7','" + transStatus + "','" + transReason + "')"
+                        #logging.info(trans_insert)
+                        #transcursor.execute(trans_insert)
+
+
+                # if not a match to tables in the exclusion list then 
+                # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
+            else: #capture entry as normal at the database level
+                for hdfsentry in hdfsentries:
+                    hdfsentry = hdfsentry.strip().strip("'")
+                    logging.info("Passing path: " + hdfsentry)
+                    #captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,row.id,permstr,1,permap["permList"])
+                    trans_insert = "insert into " + dbschema + ".policy_transactions (policy_id, storage_url,adl_path, trans_action,trans_mode, acentry,date_entered,trans_type,trans_status,trans_reason) " \
+                    " values ('" + str(transaction_row[0]) + "','" + transaction_row[7]  + "','" + transaction_row[3] + "','" + 'setAccessControlRecursive' + "','" + 'modify' + "','" + acentry + "','"+ captureTime + "','7','" + transStatus + "','" + transReason + "')"
+                    logging.info(trans_insert)
+                    transcursor.execute(trans_insert)
+            '''
+
+
 
 devstage = 'live'
 #getPolicyChanges()
