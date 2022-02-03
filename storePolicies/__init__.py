@@ -37,8 +37,7 @@ from tabulate import tabulate
 sys.path.append( 'C:\workspace\centrica' )
 #from storePolicies import metastore
 from storePolicies.hive_ms import fetch_hive_dbs
-from storePolicies.ranger import fetch_ranger_hive_dbs
-
+from storePolicies.ranger import fetch_ranger_policies
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -61,7 +60,6 @@ def storePolicies():
     tgtcollist = ['ID','Name','RepositoryName','Service Type','permMapList','Databases','Status','isRecursive','paths','DB_Names','tables','table_type','table_names']
 
     cnxn = pyodbc.connect(connxstr)
-    rangerendpoints = []
     try:
 
         # fetch a local copy of the main hive tables
@@ -114,17 +112,18 @@ def storePolicies():
         cnxn.commit()
 
         # fetch all the ranger endpoints
-        fetchendpoints = "select endpoint from  " + dbname + "." + dbschema + ".ranger_endpoints where status ='live'"
+        fetchendpoints = "select endpoint,username,password from  " + dbname + "." + dbschema + ".ranger_endpoints where status ='live'"
         #logging.info("Truncating staging table: "+(truncsql))
         cursor.execute(fetchendpoints)
         row = cursor.fetchone()
         while row:
-            rangerendpoints.append(str(row[0]))
 
             endpoint = row[0]
+            username = row[1]
+            password = row[2]
             logging.info("Connecting to ranger store @ "+endpoint)  # remember to add -int.azurehdinsight.net to your server name if you wish to connect to the ranger store on HDI using the private address
             # Connect to Ranger and fetch the Hive policy details in a list
-            ranger_hive_policies = fetch_ranger_hive_dbs(endpoint)
+            ranger_hive_policies = fetch_ranger_policies(endpoint,username,password)
             #logging.debug(str(ranger_hive_policies)) 
         
             # Now connect to Hive and fetch the database metadata details in a list
@@ -231,8 +230,8 @@ def storePolicies():
             clearsnapshot  = """truncate table policy_snapshot_by_path"""
             cursor.execute(clearsnapshot)
             cnxn.commit()
-            snapshotsql = """insert into policy_snapshot_by_path (ID, RepositoryName,adl_path,permMapList,principal,permission)
-                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+            snapshotsql = """insert into policy_snapshot_by_path (ID, RepositoryName,adl_path,permMapList,principal,principal_type,permission)
+                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse','""" + os.environ["basestorageendpoint"] + """')  adl_path,  permmaplist, userdata.value principal, 'user' principal_type, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -240,7 +239,7 @@ def storePolicies():
                              where userdata.value is not null and table_type != 'Exclusion'
                              and status = 'True'
                              UNION
-                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(trim(pathdata.value),'hdfs://namenode:9000/user/hive/warehouse','""" + os.environ["basestorageendpoint"] + """')  adl_path, permmaplist, groupdata.value principal, 'group' principal_type, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -248,7 +247,7 @@ def storePolicies():
                              where groupdata.value is not null and table_type != 'Exclusion'
                              and status = 'True'
                              UNION
-                             select distinct id, repositoryname,  replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/') adl_path,  permmaplist, userdata.value principal, permdata.value permission from ranger_policies as Tab
+                             select distinct id, repositoryname,  replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse','""" + os.environ["basestorageendpoint"] + """') adl_path,  permmaplist, userdata.value principal, 'user' principal_type, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.userList') as userdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -257,7 +256,7 @@ def storePolicies():
                              and status = 'True'
                              and tables COLLATE DATABASE_DEFAULT !=  tbldata.[key] COLLATE DATABASE_DEFAULT
                              UNION
-                             select distinct id, repositoryname, replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse/','https://rangersync.dfs.core.windows.net/datalake/')  adl_path, permmaplist, groupdata.value principal, permdata.value permission  from ranger_policies as Tab
+                             select distinct id, repositoryname, replace(trim(tbldata.value),'hdfs://namenode:9000/user/hive/warehouse','""" + os.environ["basestorageendpoint"] + """')  adl_path, permmaplist, groupdata.value principal, 'group' principal_type, permdata.value permission from ranger_policies as Tab
                              cross apply openjson (replace(Tab.permMapList,'''','"')) as jsondata 
                              cross apply openjson(jsondata.value, '$.groupList') as groupdata
                              cross apply openjson(jsondata.value,'$.permList') as permdata
@@ -268,7 +267,7 @@ def storePolicies():
                              """
                              # first insert where type is not exclusion and tables == *
                              #second insert where type is exclusion and tables != * joined to db_table lookup table excluded the ones in the exclusion list
-
+            #logging.info(snapshotsql)
             rowcount = cursor.execute(snapshotsql).rowcount
             cnxn.commit()
             print(str(rowcount) + " rows saved to snapshot table")
