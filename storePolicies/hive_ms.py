@@ -91,7 +91,7 @@ def fetch_hive_dbs(ranger_hive_policies):
                        logging.warn("hive_ms.py.fetch_hive_dbs(): Hive database "+new_db_name+" does not exist however is referenced in ranger under policy "+json_policy.policy_name)
 
                     # If table specific exclusions apply then fetch all tables and locations for the current database
-                    if json_policy.table_type == "Exclusion" and json_policy.tables != "*": 
+                    if json_policy.tables != "*": 
                         #obtain all tables+paths for the database so that we can exclude the tables+paths specified in the exclusion
                         sqltext = "select t.tbl_name, sds.location from DBS d inner join tbls t on d.DB_ID = t.DB_ID  inner join sds on sds.sd_id = t.sd_id where d.name ='" + new_db_name + "'"
                         cursor.execute(sqltext)
