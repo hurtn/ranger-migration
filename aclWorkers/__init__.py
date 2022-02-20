@@ -20,6 +20,7 @@
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #SOFTWARE.
 
+from email.policy import default
 import os
 import datetime
 import logging
@@ -32,12 +33,14 @@ from time import perf_counter
 import requests,uuid
 from requests.auth import HTTPBasicAuth
 import asyncio
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, HttpResponseError
 from azure.storage.filedatalake.aio import (
     DataLakeServiceClient,
 )
 from azure.identity.aio import ClientSecretCredential #used for service principal based auth
 from azure.identity.aio import DefaultAzureCredential #used for managed identity based auth
+
+
 
 async def main(msg: func.QueueMessage):
     logging.info('Python queue trigger function processed a queue item.')
@@ -112,10 +115,17 @@ async def main(msg: func.QueueMessage):
                         #logging.info("No ACL changes = "+ str(acls_changed))
                         await filesystem_client.close()
                         await service_client.close()  
+                        await default_credential.close()
                         now =  datetime.datetime.utcnow()
                         captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
                         u1_stop = perf_counter()
-                        if not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
+
+                        if isinstance(acls_changed,str):
+                            acls_reason = acls_changed
+                            acls_changed=0
+                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason, "+ str(acls_reason) + ". Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+
+                        elif not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
                             if not acls_changed or acls_changed == 0:
                                     acls_changed=0
                                     queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Warning', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed but did not set any ACLS. This may be due to an empty folder. Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
@@ -128,7 +138,6 @@ async def main(msg: func.QueueMessage):
                         logging.info("!!!!! Queue update SQL: "+queue_comp)
                         cursor.execute(queue_comp)
                         cnxn.commit()
-                        logging.info("!!!!! Queue update completed: "+queue_comp)
 
                         
                 except pyodbc.DatabaseError as err:
@@ -280,6 +289,7 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
 
 
         await directory_client.close()
+        logging.info("Result:" + str(acl_change_result))
         logging.info("Summary: {} directories and {} files were updated successfully, {} failures were counted."
                 .format(acl_change_result.counters.directories_successful, acl_change_result.counters.files_successful,
                         acl_change_result.counters.failure_count))
@@ -289,8 +299,11 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
             logging.info("The operation can be resumed by passing the continuation token {} again into the access control method."
                     .format(acl_change_result.continuation))
         return acl_change_result.counters.files_successful
+    except  HttpResponseError as error:    
+        logging.error("Error when attempting to set the following acl "+acl + " on " + dir_name + " :" + str(error))
+        return "Error when attempting to set the following acl "+acl + " on " + dir_name + " :" + str(error)
     except AzureError as error:
-        logging.ERROR("aclWorkers: SDK Error whilst setting ACLs recursively: "  + error.message + " at line no " + str(sys.exc_info()[-1].tb_lineno))
+        #logging.ERROR("aclWorkers: SDK Error whilst setting ACLs recursively") # "  + str(error) ) #+ " at line no " + str(sys.exc_info()[-1].tb_lineno))
         # if the error has continuation_token, you can restart the operation using that continuation_token
         if error.continuation_token:
             if trans_mode == 'modify':
