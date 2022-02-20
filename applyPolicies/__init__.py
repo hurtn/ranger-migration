@@ -32,7 +32,10 @@
 # 9 - modification: remove paths *
 # 10 - modification: add paths 
 # 11 - policy resync
-#
+# 12 - modification: add tables to inclusion/exclusion
+# 13 - modification: remove tables from inclusion/exclusion
+# 14 - modification: table type specification was inverted i.e. change from inclusion/exclusion to exclusion/inclusion
+# 15 - modification: table specification change, either tables were added or removed
 # * means these transaction types need to be validated against business rules e.g. rule of maximum
 
 import os
@@ -262,18 +265,18 @@ def syncPolicy(cursor,pPolicyId,pResources,pPermMapList,pTableNames,pTableType,p
                         spids = getSPIDs(permap["userList"],permap["groupList"])
 
                         if pTableType == 'Exclusion' and pTables != '*': # process at table level
-                            logging.warning("***** Table exclusion list in policy detected")
+                            logging.info("Table exclusion list in policy detected")
                             tablesToExclude = pTables.split(",")
                             # iterate through the array of tables for this database
                             for tblindb in tableNames:
                                 isExcluded = False  # assume not excluded until there is a match
                                 for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
-                                    logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                    #logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
                                     if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
                                         isExcluded = True
-                                        logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                        logging.info("Table " + tblindb + " is to be excluded from ACLs")
                                 if not isExcluded:
-                                    logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
+                                    logging.info("Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
                                     captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,pPolicyId,permstr,11,permap["permList"], pRepositoryName)
 
                             # if not a match to tables in the exclusion list then 
@@ -325,6 +328,52 @@ def getPolicyChanges():
         return unique
       else:
         return  ''    
+
+    def ACLlogic(hdfsentries,rid, rpermList,ruserList,rgroupList,rtableNames,rtables, rtable_type, rrepositoryName,action,trans_type):
+
+                            if action == 'modify':
+                              permstr = getPermSeq(rpermList)  
+                              permstr = permstr.ljust(3,'-')
+                              logging.info("Permissions to be set: " +permstr)
+                            else:
+                                permstr=''
+
+                            # obtain a list of all security principals
+                            spids = getSPIDs(ruserList,rgroupList)
+                            logging.warning("!!! tables is " + str(rtables[0]) + " and rtablenames is "+ str(rtableNames))
+                            if rtables[0] != '*': # process at table level
+                              logging.warning("***** Table exclusion/inclusion list in policy detected: "+str(rtables))
+                              # tablesSpecified = rtables.split(",")
+                              # iterate through the array of tables for this database
+                              for tblindb in rtableNames:
+                                  logging.info("Current table in database is "+tblindb)
+                                  isExcluded = False  # assume not excluded until there is a match
+                                  isIncluded = False
+                                  for tblSpecified in rtables: #loop through the tables in the exclusion list
+                                      logging.warning("Comparing " +  tblSpecified + " with " + tblindb)
+                                      if tblindb == tblSpecified:  # if a match to the exclusion list then set the flag
+                                          if rtable_type == 'Exclusion':
+                                              isExcluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                          if rtable_type == 'Inclusion':
+                                              isIncluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be included from ACLs")
+
+                                  if (rtable_type == 'Exclusion' and not isExcluded) or (rtable_type == 'Inclusion' and isIncluded):
+                                    logging.warning("***** Table " + tblindb + " is to be included, therefore ACLs will be "+ action + " for " + rtableNames[tblindb])  
+                                    captureTransaction(cursor,'setAccessControlRecursive',action, rtableNames[tblindb],spids,rid,permstr,trans_type,rpermList, rrepositoryName)
+
+                            elif rtable_type in ('Inclusion') and rtables[0] == '*': #capture entry as normal at the database level
+                                for hdfsentry in hdfsentries:
+                                    hdfsentry = hdfsentry.strip().strip("'")
+                                    # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
+                                    logging.info(action + " ACLs from policy for path: " + hdfsentry)
+                                    captureTransaction(cursor,'setAccessControlRecursive',action, hdfsentry,spids,row.id,permstr,trans_type,rpermList,rrepositoryName)
+                            elif rtable_type in ('Exclusion') and rtables[0] == '*': #this is an unusual combination which essentially means do nothing as everything in this database is excluded
+                                logging.warn("An unusual configuration was detected. All tables * were excluded. Please check with the policy administrator that this was the desired configuration.")
+                            else:
+                                logging.error("Could not determine policy configuration. Please contact your administrator.")
+
 
 
     connxstr=os.environ["DatabaseConnxStr"]
@@ -478,7 +527,11 @@ def getPolicyChanges():
                 for row in insertdf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names','repositoryName']].itertuples():
                     
                     if row.Status in ('Enabled','True') : 
+ 
+                        for permap in json.loads(row.permMapList): #this loop iterates through each permMapList and applies the ACLs
 
+                            ACLlogic(row.Resources.strip("path=[").strip("[").strip("]").split(","),row.id,permap["permList"],permap["userList"],permap["groupList"],json.loads(row.table_names),row.tables.split(","),row.table_type, row.repositoryName,'modify',1)
+                        """
                         # obtain all the comma separated resource paths and make one ACL call path with a dictionary of groups and users, and a set of rwx permissions
                         hdfsentries = row.Resources.strip("path=[").strip("[").strip("]").split(",")
 
@@ -502,29 +555,37 @@ def getPolicyChanges():
                             # obtain a list of all security principals
                             spids = getSPIDs(permap["userList"],permap["groupList"])
 
-                            if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
+                            if row.tables != '*': # process at table level
                               logging.warning("***** Table exclusion list in policy detected")
-                              tablesToExclude = row.tables.split(",")
+                              tablesSpecified = row.tables.split(",")
                               # iterate through the array of tables for this database
                               for tblindb in tableNames:
                                   isExcluded = False  # assume not excluded until there is a match
-                                  for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
-                                      logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
-                                      if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
-                                          isExcluded = True
-                                          logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
-                                  if not isExcluded:
-                                    logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
+                                  isIncluded = False
+                                  for tblSpecified in tablesSpecified: #loop through the tables in the exclusion list
+                                      logging.warning("Comparing " +  tblSpecified + " with " + tblindb)
+                                      if tblindb == tblSpecified:  # if a match to the exclusion list then set the flag
+                                          if row.table_type == 'Exclusion':
+                                              isExcluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                          if row.table_type == 'Inclusion':
+                                              isIncluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be included from ACLs")
+
+                                  if (row.table_type == 'Exclusion' and not isExcluded) or (row.table_type == 'Inclusion' and isIncluded):
+                                    logging.warning("***** Table " + tblindb + " is to be included, therefore ACLs will be added to " + tableNames[tblindb])  
                                     captureTransaction(cursor,'setAccessControlRecursive','modify', tableNames[tblindb],spids,row.id,permstr,1,permap["permList"], row.repositoryName)
 
-                              # if not a match to tables in the exclusion list then 
-                                # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
-                            else: #capture entry as normal at the database level
+                            elif row.table_type in ('Inclusion') and row.tables == '*': #capture entry as normal at the database level
                                 for hdfsentry in hdfsentries:
                                     hdfsentry = hdfsentry.strip().strip("'")
                                     logging.info("Passing path: " + hdfsentry)
                                     captureTransaction(cursor,'setAccessControlRecursive','modify', hdfsentry,spids,row.id,permstr,1,permap["permList"],row.repositoryName)
-
+                            elif row.table_type in ('Exclusion') and row.tables == '*': #this is an unusual combination which essentially means do nothing as everything in this database is excluded
+                                logging.warn("An unusual configuration was detected. All tables * were excluded. Please check with the policy administrator that this was the desired configuration.")
+                            else:
+                                logging.error("Could not determine policy configuration. Please contact your administrator.")
+                        """
             if not deleteddf.empty:
             #################################################
             #                                               #
@@ -541,7 +602,7 @@ def getPolicyChanges():
                 for row in deleteddf.loc[:, ['__$operation','id','Name','Resources','Status','permMapList','Service Type','table_type','tables','table_names','repositoryName']].itertuples():
                     
                     if row.Status in ('Enabled','True'): # only bother deleting ACLs where the policy was in an enabled state
-
+                        """
                         #Load the json string of permission mappings into a dictionary object
                         permmaplist = json.loads(row.permMapList)
                         tableNames = json.loads(row.table_names)
@@ -561,31 +622,43 @@ def getPolicyChanges():
 
                             spids = getSPIDs(permap["userList"],permap["groupList"])
 
-                            if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
-                              logging.info("***** Table exclusion list in policy detected")
-                              tablesToExclude = row.tables.split(",")
+                            if row.tables != '*': # process at table level
+                              logging.warning("***** Table exclusion list in policy detected")
+                              tablesSpecified = row.tables.split(",")
                               # iterate through the array of tables for this database
                               for tblindb in tableNames:
                                   isExcluded = False  # assume not excluded until there is a match
-                                  for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
-                                      logging.info("Comparing " +  tblToExclude + " with " + tblindb)
-                                      if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
-                                          isExcluded = True
-                                          logging.info("***** Table " + tblindb + " is to be excluded from ACLs")
-                                  if not isExcluded:
-                                    logging.info("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNames[tblindb])  
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', tableNames[tblindb],spids,row.id,'',2,'',row.repositoryName)
+                                  isIncluded = False
+                                  for tblSpecified in tablesSpecified: #loop through the tables in the exclusion list
+                                      logging.warning("Comparing " +  tblSpecified + " with " + tblindb)
+                                      if tblindb == tblSpecified:  # if a match to the exclusion list then set the flag
+                                          if row.table_type == 'Exclusion':
+                                              isExcluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                          if row.table_type == 'Inclusion':
+                                              isIncluded = True
+                                              logging.warning("***** Table " + tblindb + " is to be included from ACLs")
 
+                                  if (row.table_type == 'Exclusion' and not isExcluded) or (row.table_type == 'Inclusion' and isIncluded):
+                                    logging.warning("***** Table " + tblindb + " is to be included, therefore ACLs will be removed from " + tableNames[tblindb])  
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', tableNames[tblindb],spids,row.id,'',1,'', row.repositoryName)
 
-                              # if not a match to tables in the exclusion list then 
-                                # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
-                            else: #capture entry as normal at the database level
-
+                            elif row.table_type in ('Inclusion') and row.tables == '*': #capture entry as normal at the database level
                                 for hdfsentry in hdfsentries:
                                     hdfsentry = hdfsentry.strip().strip("'")
                                     # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
                                     logging.info("Removing ACLs from deleted policy for path: " + hdfsentry)
                                     captureTransaction(cursor,'setAccessControlRecursive','remove', hdfsentry,spids,row.id,'',2,'',row.repositoryName)
+                            elif row.table_type in ('Exclusion') and row.tables == '*': #this is an unusual combination which essentially means do nothing as everything in this database is excluded
+                                logging.warn("An unusual configuration was detected. All tables * were excluded. Please check with the policy administrator that this was the desired configuration.")
+                            else:
+                                logging.error("Could not determine policy configuration. Please contact your administrator.")
+                        """
+                        for permap in json.loads(row.permMapList): #this loop iterates through each permMapList and applies the ACLs
+
+                            ACLlogic(row.Resources.strip("path=[").strip("[").strip("]").split(","),row.id,permap["permList"],permap["userList"],permap["groupList"],json.loads(row.table_names),row.tables.split(","),row.table_type, row.repositoryName,'remove',2)
+
+
 
             #logging.info("Determining any other changes...")
 
@@ -594,7 +667,6 @@ def getPolicyChanges():
             #             Modified Policies                 #
             #                                               #
             ################################################# 
-
             if not updatesdf.empty:
                 logging.info("\nModified policy rows detected:")
                 logging.info(updatesdf)
@@ -619,6 +691,7 @@ def getPolicyChanges():
                 accessesafter = []
                 statusbefore = ''
                 statusafter = ''
+                tableTypeChanged = False
                 #aclsForAllPathsSet = False #this variable is an modified policy optimisation - for example if the changes included a new permisssion and simultaneously a new path/database was added there is no need to do these both as there would be duplication so we set a flag when one is done to avoid doing the other
 
                 # Comment: 11b
@@ -643,7 +716,6 @@ def getPolicyChanges():
                         resourcesbefore = resourcesafter # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
                                                          # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
 
-
                     if firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]] is not None:
                         tableNamesAfter = json.loads(firstandlastforid.get(key = 'table_names')[firstandlastforid.tail(1).index[0]])
                     else:
@@ -656,8 +728,19 @@ def getPolicyChanges():
 
                     
                 elif row['Service Type']=='hdfs':
-                    resourcesbefore = firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]].split(",")
-                    resourcesafter = firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]].split(",")   # note the syntax [firstandlastforid.tail(1).index[0]] fetches the index of the last record in case there were multiple changes
+                    #resourcesbefore = firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]].split(",")
+                    #resourcesafter = firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]].split(",")   # note the syntax [firstandlastforid.tail(1).index[0]] fetches the index of the last record in case there were multiple changes
+                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]] is not None:
+                        resourcesafter = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.tail(1).index[0]])
+                    else:
+                        resourcesafter =  ''
+
+                    if firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]] is not None:
+                        resourcesbefore = ast.literal_eval(firstandlastforid.get(key = 'Resources')[firstandlastforid.head(1).index[0]])
+                    else:
+                        resourcesbefore = resourcesafter # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
+                                                         # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
+
                 else:
                     resourcesbefore = ''
                     resourcesafter = ''
@@ -693,26 +776,32 @@ def getPolicyChanges():
                 # obtain table type (exclusion or inclusion) setting and tables if any
                 tableTypeBefore =  firstandlastforid.get(key = 'table_type')[firstandlastforid.head(1).index[0]].strip()
                 tableTypeAfter = firstandlastforid.get(key = 'table_type')[firstandlastforid.tail(1).index[0]].strip()
-                if firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]] is not None:
-                    tableListBefore =  firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
-                else:
-                    tableListBefore=''
+
 
                 if firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]] is not None:
                     tableListAfter = firstandlastforid.get(key = 'tables')[firstandlastforid.tail(1).index[0]].strip("[").strip("]").split(",")
                 else:
-                    tableListAfter=tableListBefore  # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
+                    tableListAfter=''  # note this is done because of the way CDC provides changes for operation type 3 (updates) for columns with varchar(max) i.e. if the before image is NULL this means no change occured, therefore we set it to the current/after value
                                                          # see https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/cdc-fn-cdc-get-all-changes-capture-instance-transact-sql?view=sql-server-ver15#remarks
 
-                if tableTypeBefore != tableTypeAfter and tableTypeAfter == 'Exclusion' and tableListAfter[0] != "*": 
-                    tableExclusionSet = True
+                if firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]] is not None:
+                    tableListBefore =  firstandlastforid.get(key = 'tables')[firstandlastforid.head(1).index[0]].strip("[").strip("]").split(",")
+                else:
+                    tableListBefore=tableListAfter
+
+
+                if tableTypeBefore != tableTypeAfter: #and tableTypeAfter == 'Exclusion': #and tableListAfter[0] != "*": 
+                    tableTypeChanged = True
+                    if tableTypeAfter == 'Exclusion':
+                        logging.info('Table type changed from Inclusion to Exclusion!')
+                        tableExclusionSet = True
+                    else:
+                        logging.info('Table type changed from Exclusion to Inclusion!')
+                        tableExclusionRemoved = True
+
                 else: 
                     tableExclusionSet=False
-
-                if (tableTypeBefore != tableTypeAfter and tableTypeAfter == 'Inclusion') or tableListAfter[0] == "*": 
-                    tableExclusionRemoved = True
-                else: 
-                    tableExclusionRemoved =False
+                    tableTypeChanged = False
 
 
                 # iterate through the permaplist array
@@ -786,10 +875,20 @@ def getPolicyChanges():
                             removeusers = None
 
                     # determine if any permissions changed
-                    # note we do not actually need to calculate the differences in permissions because they must be done as a delete of ACLs using the before image
-                    # and an addition of new ACLs using the after image ie there is no incremental way to remove just a read or a write permission individually AFAIK
                     addaccesses = entitiesToAdd(accessesbefore,accessesafter)
                     removeaccesses = entitiesToRemove(accessesbefore,accessesafter) 
+
+                    # determine if any of the table specifications changed
+                    addtables = entitiesToAdd(tableListBefore,tableListAfter)
+                    removetables = entitiesToRemove(tableListBefore,tableListAfter)    
+
+                    #check if they are really different even if the order was simply changed
+                    if addtables or removetables:
+                        if check_if_equal(addtables, removetables):
+                            logging.info('Tables in before and after lists are equal i.e. contain similar elements with same frequency, negating any changes required')
+                            addtables = None
+                            removetables = None
+
 
                     # determine whether policy status changed
                     if statusbefore != statusafter:
@@ -839,7 +938,7 @@ def getPolicyChanges():
                         #
 
                         # process incremental changes to groups, users, accesses or resources if there wasn't a status change above which would take care of these for a specific policy
-                        if addgroups or addusers or removegroups or removeusers or removeaccesses or addaccesses or tableExclusionSet or tableExclusionRemoved or addresources or removeresources: 
+                        if addgroups or addusers or removegroups or removeusers or removeaccesses or addaccesses or tableTypeChanged or addresources or removeresources or addtables or removetables: 
 
                             if removeresources:
 
@@ -848,7 +947,7 @@ def getPolicyChanges():
                                 for resourcetoremove in removeresources:
                                     resourcetoremove = resourcetoremove.strip().strip("'")
                                     logging.info("Removing ACLs from deleted directory path: " + resourcetoremove)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesafter,row.repositoryName)
+                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesbefore,row.repositoryName)
 
                             if addresources:
                                 logging.info("add the new permissions to the following resources")
@@ -857,14 +956,28 @@ def getPolicyChanges():
                                     resourcetoadd = resourcetoadd.strip().strip("'")
                                     logging.info("Adding ACLs to new directory path: " + resourcetoadd)
                                     captureTransaction(cursor,'setAccessControlRecursive','modify', resourcetoadd,spids,row.id,permstr,10,accessesafter,row.repositoryName)
+                            
+                            # if table type changed from inclusion to exclusion or exclusion to inclusion
+                            #  
+                            # Remove all previously applied permissions for database/tables using the before image
+                            # and now only apply permissions for the database/tables in the after image)   
 
-                            if tableExclusionSet:
-                                #now remove just the ACLs for the paths of the excluded tables
-                                None
-                        
-                            if tableExclusionRemoved:
-                                #now add just the ACLs for the paths of the tables in the before image of the record
-                                None
+                            if tableTypeChanged:
+                                logging.info("Processing table type change: " + str(tableNamesBefore) + " - " + str(tableListBefore))
+                                ACLlogic(resourcesbefore,row.id,'',usersbefore,groupsbefore,tableNamesBefore,tableListBefore,tableTypeBefore,row.repositoryName,'remove',14)
+                                ACLlogic(resourcesafter,row.id,accessesafter,usersafter,groupsafter,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'modify',14)
+
+
+                            if addtables:
+                                logging.info("The following new tables were added to the table specification: "+str(addtables))
+                                ACLlogic(resourcesafter,row.id,accessesafter,usersafter,groupsafter,tableNamesAfter,addtables,tableTypeAfter,row.repositoryName,'modify',15)
+
+
+                            if removetables:
+                                logging.info("The following tables were removed from the table specification: "+str(removetables))
+                                if tableListAfter[0]!='*':
+                                    ACLlogic(resourcesbefore,row.id,'',usersbefore,groupsbefore,tableNamesBefore,removetables,tableTypeBefore,row.repositoryName,'remove',15)
+                            
 
                             #########################
                             # user or group changes
@@ -879,27 +992,33 @@ def getPolicyChanges():
                                     for usertoremove in removeusers:
                                         logging.info(usertoremove)
 
+                                ACLlogic(resourcesbefore,row.id,'',removeusers,removegroups,tableNamesBefore,tableListBefore,tableTypeBefore,row.repositoryName,'remove',5)
+                                """spids = getSPIDs(removeusers,removegroups)
 
-                            # if table_type == 'Exclusion' and tables != '*':
-                              # iterate through array of tables for these databases
-                              # if not a match to tables in the exclusion list then 
+                                if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
+                                    logging.warning("***** Table exclusion list in policy detected")
+                                    tablesToExclude = row.tables.split(",")
+                                    # iterate through the array of tables for this database
+                                    for tblindb in tableNamesAfter:
+                                        isExcluded = False  # assume not excluded until there is a match
+                                        for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                                            logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                            if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                                                isExcluded = True
+                                                logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                        if not isExcluded:
+                                            logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNamesAfter[tblindb])  
+                                            captureTransaction(cursor,'setAccessControlRecursive','remove', tableNamesAfter[tblindb],spids,row.id,'',5,accessesafter, row.repositoryName)
+
+                                # if not a match to tables in the exclusion list then 
                                 # captureTransaction(cursor,'setAccessControlRecursive','modify', #pathToTable,spids,row.id,permstr,1,permap["permList"])                               
-                            # else: capture entry as normal at the database level
-                                for resourceentry in resourcesbefore:
-                                    resourceentry = resourceentry.strip().strip("'")
-                                    # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
-                                    spids = getSPIDs(removeusers,removegroups)
-                                    logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',5,accessesafter,row.repositoryName)                                    
-                                    #if resourceentry:
-                                    #    logging.info('calling bulk remove per directory path')
-                                    #    acls_changed += removeADLSBulkPermissions(basestorageuri,storagetoken, spids,  resourceentry)
-                                    #    acl_change_counter += acls_changed
-                                    #    if acls_changed==0:
-                                    #        errorflag=1
-                                    ##else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
-
+                                else: #capture entry as normal at the database level
+                                    for resourceentry in resourcesbefore:
+                                        resourceentry = resourceentry.strip().strip("'")
+                                        # obtain a list of all security principals, ignore exclusions and where rule of maximum applies
+                                        logging.info("Capturing ACL transaction for path: " + resourceentry)
+                                        captureTransaction(cursor,'setAccessControlRecursive','remove', resourceentry,spids,row.id,'',5,accessesafter,row.repositoryName)                                    
+                                """
                             if addgroups or addusers: 
                                 if addgroups:
                                     logging.info("Add the following groups: ")
@@ -909,23 +1028,34 @@ def getPolicyChanges():
                                     logging.info("Add the following users")
                                     for usertoadd in addusers:
                                         logging.info(usertoadd)
-
+                                ACLlogic(resourcesbefore,row.id,accessesafter,addusers,addgroups,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'modify',6)
+                                """
                                 spids = getSPIDs(addusers,addgroups)  ## Note: here we could potentially use the rowafter.Users/Groups list (i.e. the current image of groups) instead of the delta/difference
-                         
-                                for resourceentry in resourcesafter:
-                                    resourceentry = resourceentry.strip().strip("'")
-                                    #logging.info('Were all principals excluded? ' + str(allPrincipalsExcluded))
-                                    logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,6,accessesafter,row.repositoryName)
-                                    #if resourceentry:
-                                    #    logging.info('calling bulk set')
-                                    #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
-                                    #    acl_change_counter += acls_changed
-                                    #    if acls_changed==0:
-                                    #        errorflag=1
-                                    #else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
 
+                                if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
+                                    logging.warning("***** Table exclusion list in policy detected")
+                                    tablesToExclude = row.tables.split(",")
+                                    # iterate through the array of tables for this database
+                                    for tblindb in tableNamesAfter:
+                                        isExcluded = False  # assume not excluded until there is a match
+                                        for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                                            logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                            if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                                                isExcluded = True
+                                                logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                        if not isExcluded:
+                                            logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNamesAfter[tblindb])  
+                                            captureTransaction(cursor,'setAccessControlRecursive','modify', tableNamesAfter[tblindb],spids,row.id,permstr,6,accessesafter, row.repositoryName)
+
+                                # if not a match to tables in the exclusion list then 
+                                else: #capture entry as normal at the database level
+                         
+                                    for resourceentry in resourcesafter:
+                                        resourceentry = resourceentry.strip().strip("'")
+                                        #logging.info('Were all principals excluded? ' + str(allPrincipalsExcluded))
+                                        logging.info("Passing path: " + resourceentry)
+                                        captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,6,accessesafter,row.repositoryName)
+                                """
                             #######################################
                             # determine access/permissions changes
                             ######################################
@@ -937,46 +1067,63 @@ def getPolicyChanges():
                                 for accesstoremove in removeaccesses:
                                     logging.info(accesstoremove)
 
+                                ACLlogic(resourcesafter,row.id,accessesafter,usersafter,groupsafter,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'modify',7)
+                                """
                                 spids = getSPIDs(usersafter,groupsafter)
-                                for resourceentry in resourcesafter:
-                                    resourceentry = resourceentry.strip().strip("'")
-                                    logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,7,removeaccesses,row.repositoryName)
-                                    #if resourceentry:
-                                    #    logging.info('calling bulk remove per directory path')
-                                    #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
-                                    #    aclErrorLogic(acls_changed)
-                                    #    acl_change_counter += acls_changed
-                                    #    if acls_changed==0:
-                                    #        errorflag=1
 
-                                    #else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
+                                if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
+                                    logging.warning("***** Table exclusion list in policy detected")
+                                    tablesToExclude = row.tables.split(",")
+                                    # iterate through the array of tables for this database
+                                    for tblindb in tableNamesAfter:
+                                        isExcluded = False  # assume not excluded until there is a match
+                                        for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                                            logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                            if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                                                isExcluded = True
+                                                logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                        if not isExcluded:
+                                            logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNamesAfter[tblindb])  
+                                            captureTransaction(cursor,'setAccessControlRecursive','modify', tableNamesAfter[tblindb],spids,row.id,permstr,7,removeaccesses, row.repositoryName)
+                                # if not a match to tables in the exclusion list then 
+                                else: #capture entry as normal at the database level
 
-
+                                    for resourceentry in resourcesafter:
+                                        resourceentry = resourceentry.strip().strip("'")
+                                        logging.info("Passing path: " + resourceentry)
+                                        captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,7,removeaccesses,row.repositoryName)
+                                """
                             if addaccesses:
                                 logging.info("add the following accesses")
                                 for accesstoadd in addaccesses:
                                     logging.info(accesstoadd)
+                                ACLlogic(resourcesafter,row.id,accessesafter,usersafter,groupsafter,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'modify',8)
 
+                                """
                                 spids = getSPIDs(usersafter,groupsafter)  ## Note: here we could potentially use the rowafter.Users/Groups list (i.e. the current image of groups) instead of the delta/difference
 
-                                for resourceentry in resourcesafter:
-                                    resourceentry = resourceentry.strip().strip("'")
-                                    logging.info("Passing path: " + resourceentry)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,8,addaccesses,row.repositoryName)
-                                    #if resourceentry:
-                                    #    #logging.info('calling bulk set')
-                                    #    acls_changed += setADLSBulkPermissions(basestorageuri,storagetoken, spids, resourceentry, permstr)
-                                    #    acl_change_counter += acls_changed
-                                    ##    if acls_changed==0:
-                                    #        errorflag=1
-                                    #else:
-                                    #    logging.warning("No storage path obtained for policy "+ str(rowid))
+                                if row.table_type == 'Exclusion' and row.tables != '*': # process at table level
+                                    logging.warning("***** Table exclusion list in policy detected")
+                                    tablesToExclude = row.tables.split(",")
+                                    # iterate through the array of tables for this database
+                                    for tblindb in tableNamesAfter:
+                                        isExcluded = False  # assume not excluded until there is a match
+                                        for tblToExclude in tablesToExclude: #loop through the tables in the exclusion list
+                                            logging.warning("Comparing " +  tblToExclude + " with " + tblindb)
+                                            if tblindb == tblToExclude:  # if a match to the exclusion list then set the flag
+                                                isExcluded = True
+                                                logging.warning("***** Table " + tblindb + " is to be excluded from ACLs")
+                                        if not isExcluded:
+                                            logging.warning("***** Table " + tblindb + " was not found on the table exclusion list, therefore ACLs will be added to " + tableNamesAfter[tblindb])  
+                                            captureTransaction(cursor,'setAccessControlRecursive','modify', tableNamesAfter[tblindb],spids,row.id,permstr,8,addaccesses, row.repositoryName)
+                                # if not a match to tables in the exclusion list then 
+                                else: #capture entry as normal at the database level
 
-
-
-
+                                    for resourceentry in resourcesafter:
+                                        resourceentry = resourceentry.strip().strip("'")
+                                        logging.info("Passing path: " + resourceentry)
+                                        captureTransaction(cursor,'setAccessControlRecursive','modify', resourceentry,spids,row.id,permstr,8,addaccesses,row.repositoryName)
+                                """
                         else:
                             #logging.info("Changes were identified but no action taken. This could be due to: \n- A policy entry was updated but the fields stayed the same, just the order of the entities changed. \n- A change occured that did not pertain to paths, users, groups, permissions. \nThese change have been ignored.")
                             logging.info("No valid changes found. No further action required")
@@ -1021,7 +1168,23 @@ def getPolicyChanges():
             logging.info("applyPolicies: Saving a copy of AAD principals into cache table")
             #tempdf = tempdf.set_index('AAD_principal_name')
             aadcachedf = pd.concat([tempdf.drop(columns='AAD_OID'),pd.DataFrame(tempdf['AAD_OID'].tolist(), columns=['AAD_OID'])],axis=1)
-            aadcachedf.to_sql("aad_cache",engine,index=False,if_exists="replace")
+            aadcachedf.to_sql("aad_cache_staging",engine,index=False,if_exists="replace")
+
+            rowcount = -1
+            mergesql = """MERGE """ + dbname + """.""" + dbschema + """.aad_cache AS Target
+            USING (select aad_principal_name, aad_oid from  """ + dbname + """.""" + dbschema + """.aad_cache_staging) AS Source
+            ON (Target.[aad_principal_name] = Source.[aad_principal_name])
+            WHEN MATCHED THEN
+                UPDATE SET Target.[aad_oid] = Source.[aad_oid]
+            WHEN NOT MATCHED BY TARGET THEN
+                INSERT (aad_principal_name,aad_oid)
+                VALUES (
+                Source.[aad_principal_name]
+                , Source.[aad_oid]); """
+            #logging.info(mergesql)
+            rowcount = cursor.execute(mergesql).rowcount
+            cnxn.commit()
+            logging.info(str(rowcount) + " rows merged into aad cache table")
 
     except pyodbc.DatabaseError as err:
             cnxn.commit()
@@ -1201,7 +1364,8 @@ def getPermSeq(perms):
         elif perm.strip() == 'select' and lpermstr.find('r')<0: lpermstr='r'
         elif perm.strip() == 'write' and lpermstr.find('r')<0 and lpermstr.find('w')<0: lpermstr='-w' # this is a special case where no read permissions were found
         elif perm.strip() == 'write' and lpermstr.find('r')>=0 and lpermstr.find('w')<0: lpermstr='rw'
-        elif perm.strip() == 'update' and lpermstr.find('w')<0: lpermstr+='w'
+        elif perm.strip() == 'update' and lpermstr.find('r')<0 and lpermstr.find('w')<0: lpermstr='-w'
+        elif perm.strip() == 'update' and lpermstr.find('r')>=0 and lpermstr.find('w')<0: lpermstr='rw'
         elif perm.strip() == 'execute' and lpermstr.find('x')<0: lpermstr+='x'
         elif perm.strip() == 'all': return 'rwx'
         else: lpermstr+=''
