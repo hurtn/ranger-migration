@@ -35,7 +35,7 @@
 # 12 - modification: add tables to inclusion/exclusion
 # 13 - modification: remove tables from inclusion/exclusion
 # 14 - modification: table type specification was inverted i.e. change from inclusion/exclusion to exclusion/inclusion
-# 15 - modification: table level specification added, ie was * now tables have been specified
+# 15 - modification: table level specification set, ie was * now tables have been specified
 # 16 - modification: table level specification removed, ie was tables now * have been specified 
 # 17 - modification: tables added to table specification
 # 18 - modification: tables removed from table specification
@@ -370,14 +370,14 @@ def getPolicyChanges():
                                         captureTransaction(cursor,'setAccessControlRecursive',action, rtableNames[tblindb],spids,rid,permstr,trans_type,rpermList, rrepositoryName)
                                 if os.environ.get('allowDatabaseLs','0')=='1': # this variable defines whether users should have ls permissions at the database level to see all tables regardless of whether they have access to those tables
 
-                                    # if trans_type = 1 (new policy) then add read permissions at database level also
-                                    if trans_type in (1,15):
+                                    # if trans_type = 1 (new policy) or 6 (add principals) or 15 (change to table level) then add read permissions at database level also
+                                    if trans_type in (1,15,6):
                                         logging.info("allowDatabaseLs environment variable active, therefore addition r-x permissions will be applied at database level")                                        
                                         for hdfsentry in hdfsentries:
                                             hdfsentry = hdfsentry.strip().strip("'")
                                             captureTransaction(cursor,'setAccessControl','modify', hdfsentry,spids,rid,'r-x',19,rpermList, rrepositoryName)                                      
                                     #if trans_type = 2 (entire policy deleted) then remove read permissions at the database level also
-                                    if trans_type == 2:
+                                    if trans_type in (2,7): # if remove policy or remove principals then remove read permissions at the database level
                                         logging.info("allowDatabaseLs environment variable active, therefore addition r-x permissions will be removed at database level")
                                         for hdfsentry in hdfsentries:
                                             hdfsentry = hdfsentry.strip().strip("'")                                        
@@ -972,21 +972,27 @@ def getPolicyChanges():
 
                             if removeresources:
 
-                                spids = getSPIDs(usersbefore,groupsbefore)
+                                #spids = getSPIDs(usersbefore,groupsbefore)
 
-                                for resourcetoremove in removeresources:
-                                    resourcetoremove = resourcetoremove.strip().strip("'")
-                                    logging.info("Removing ACLs from deleted directory path: " + resourcetoremove)
-                                    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesbefore,row.repositoryName)
+                                #for resourcetoremove in removeresources:
+                                #    resourcetoremove = resourcetoremove.strip().strip("'")
+                                #    logging.info("Removing ACLs from deleted directory path: " + resourcetoremove)
+                                #    captureTransaction(cursor,'setAccessControlRecursive','remove', resourcetoremove,spids,row.id,'',9,accessesbefore,row.repositoryName)
+                                ACLlogic(removeresources,row.id,accessesbefore,usersafter,groupsafter,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'remove',9)
+
 
                             if addresources:
                                 logging.info("add the new permissions to the following resources")
-                                spids = getSPIDs(usersafter,groupsafter)
-                                for resourcetoadd in addresources:
-                                    resourcetoadd = resourcetoadd.strip().strip("'")
-                                    logging.info("Adding ACLs to new directory path: " + resourcetoadd)
-                                    captureTransaction(cursor,'setAccessControlRecursive','modify', resourcetoadd,spids,row.id,permstr,10,accessesafter,row.repositoryName)
-                            
+                                #spids = getSPIDs(usersafter,groupsafter)
+                                #for resourcetoadd in addresources:
+                                #    resourcetoadd = resourcetoadd.strip().strip("'")
+                                #    logging.info("Adding ACLs to new directory path: " + resourcetoadd)
+                                #    captureTransaction(cursor,'setAccessControlRecursive','modify', resourcetoadd,spids,row.id,permstr,10,accessesafter,row.repositoryName)
+
+                                ACLlogic(addresources,row.id,accessesafter,usersafter,groupsafter,tableNamesAfter,tableListAfter,tableTypeAfter,row.repositoryName,'modify',10)
+
+
+
                             # if table type changed from inclusion to exclusion or exclusion to inclusion
                             #  
                             # Remove all previously applied permissions for database/tables using the before image
