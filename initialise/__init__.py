@@ -362,7 +362,9 @@ def initialise():
                             insert into perm_mapping (ranger_perm, adls_perm) values ('read','r');           
                             insert into perm_mapping (ranger_perm, adls_perm) values ('update','w');           
                             insert into perm_mapping (ranger_perm, adls_perm) values ('write','w');           
-                            insert into perm_mapping (ranger_perm, adls_perm) values ('execute','x');"""
+                            insert into perm_mapping (ranger_perm, adls_perm) values ('all','r');
+                            insert into perm_mapping (ranger_perm, adls_perm) values ('all','w');
+                            insert into perm_mapping (ranger_perm, adls_perm) values ('all','x');"""
             cursor.execute(insertsql)
             cnxn.commit()
         except pyodbc.DatabaseError as err:
