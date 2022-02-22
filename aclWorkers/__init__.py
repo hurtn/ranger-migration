@@ -94,38 +94,13 @@ async def main(msg: func.QueueMessage):
                 #if len(recsupdated)>0:
                 try:
                     u1_start = perf_counter()         
-
-                    #storagetoken = getBearerToken(tenantid,"storage.azure.com",spnid,spnsecret)
-                    #acls_changed += setADLSBulkPermissions(storagetoken, str(result["storage_url"]), str(result["acentry"]),str(result["trans_action"]),str(result["trans_mode"]))
-
-                    if spnid!='' and spnsecret!='': # use service principal credentials
-                        default_credential = ClientSecretCredential(            tenantid,            spnid,            spnsecret,       )
-                    else: # else use managed identity credentials
-                        default_credential = DefaultAzureCredential() 
-
-                    urlparts =  str(result["storage_url"]).split('/',4)
-                    service_client = DataLakeServiceClient("https://{}".format(urlparts[2]),
-                                                                credential=default_credential)
-
-                    logging.info("Obtained service client")
-                    async with service_client:
-                        filesystem_client = service_client.get_file_system_client(file_system=urlparts[3])
-                        logging.info('Setting ACLs recursively ' + str(result['acentry']))
-                        acls_changed = await set_recursive_access_control(filesystem_client,urlparts[4], str(result["acentry"]),result["id"],u1_start, str(result["trans_mode"]), vContinuationToken)
-                        #logging.info("No ACL changes = "+ str(acls_changed))
-                        await filesystem_client.close()
-                        await service_client.close()  
-                        await default_credential.close()
+                    if str(result["trans_action"]) == 'setAccessControl':
+                        storagetoken = getBearerToken(tenantid,"storage.azure.com",spnid,spnsecret)
+                        acls_changed += setADLSBulkPermissions(storagetoken, str(result["storage_url"]), str(result["acentry"]),str(result["trans_action"]),str(result["trans_mode"]))
                         now =  datetime.datetime.utcnow()
                         captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
                         u1_stop = perf_counter()
-
-                        if isinstance(acls_changed,str):
-                            acls_reason = acls_changed
-                            acls_changed=0
-                            queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason, "+ str(acls_reason) + ". Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
-
-                        elif not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
+                        if not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
                             if not acls_changed or acls_changed == 0:
                                     acls_changed=0
                                     queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Warning', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed but did not set any ACLS. This may be due to an empty folder. Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
@@ -138,6 +113,48 @@ async def main(msg: func.QueueMessage):
                         logging.info("!!!!! Queue update SQL: "+queue_comp)
                         cursor.execute(queue_comp)
                         cnxn.commit()
+
+                    else:
+                        if spnid!='' and spnsecret!='': # use service principal credentials
+                            default_credential = ClientSecretCredential(            tenantid,            spnid,            spnsecret,       )
+                        else: # else use managed identity credentials
+                            default_credential = DefaultAzureCredential() 
+
+                        urlparts =  str(result["storage_url"]).split('/',4)
+                        service_client = DataLakeServiceClient("https://{}".format(urlparts[2]),
+                                                                    credential=default_credential)
+
+                        logging.info("Obtained service client")
+                        async with service_client:
+                            filesystem_client = service_client.get_file_system_client(file_system=urlparts[3])
+                            logging.info('Setting ACLs recursively ' + str(result['acentry']))
+                            acls_changed = await set_recursive_access_control(filesystem_client,urlparts[4], str(result["acentry"]),result["id"],u1_start, str(result["trans_mode"]), vContinuationToken)
+                            #logging.info("No ACL changes = "+ str(acls_changed))
+                            await filesystem_client.close()
+                            await service_client.close()  
+                            await default_credential.close()
+                            now =  datetime.datetime.utcnow()
+                            captureTime = now.strftime('%Y-%m-%d %H:%M:%S')
+                            u1_stop = perf_counter()
+
+                            if isinstance(acls_changed,str):
+                                acls_reason = acls_changed
+                                acls_changed=0
+                                queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason, "+ str(acls_reason) + ". Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+
+                            elif not acls_changed or acls_changed <0: # there were either no files in the folder or some error or aborted due to user error
+                                if not acls_changed or acls_changed == 0:
+                                        acls_changed=0
+                                        queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Warning', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed but did not set any ACLS. This may be due to an empty folder. Finished in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                                elif acls_changed == -4:
+                                        queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Aborted', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted due to user error correction in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                                else:
+                                        queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Error', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Aborted in  " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                            else:
+                                queue_comp = "update " + dbschema + ".policy_transactions set trans_status = 'Done', acl_count = "+str(acls_changed) + ", last_updated = '"+ captureTime + "', trans_reason = concat(trans_reason,'Completed in " + str(format(u1_stop-u1_start,'.3f')) + " seconds. ') where id = "+str(result["id"])
+                            logging.info("!!!!! Queue update SQL: "+queue_comp)
+                            cursor.execute(queue_comp)
+                            cnxn.commit()
 
                         
                 except pyodbc.DatabaseError as err:
@@ -165,41 +182,64 @@ async def main(msg: func.QueueMessage):
 
 
 def getBearerToken(tenantid,resourcetype,spnid,spnsecret):
-    endpoint = 'https://login.microsoftonline.com/' + tenantid + '/oauth2/token'
-
+    bearertoken = ''
+    endpoint = 'https://login.microsoftonline.com/' + tenantid 
+    #if spnid!='' and spnsecret!='':
+    endpoint = endpoint + '/oauth2/token'
+    #else:
+    #     endpoint = endpoint + '/MSI/token'  #if no service principal details then use managed identity
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    payload = 'grant_type=client_credentials&client_id='+spnid+'&client_secret='+ spnsecret + '&resource=https%3A%2F%2F'+resourcetype+'%2F'
-    #payload = 'resource=https%3A%2F%2F'+resourcetype+'%2F'
-    #print(endpoint)
-    #print(payload)
-    r = requests.post(endpoint, headers=headers, data=payload)
+
+    # if service principal auth then use client credentials flow
+    if spnid!='' and spnsecret!='':
+        endpoint = 'https://login.microsoftonline.com/' + tenantid 
+        endpoint = endpoint + '/oauth2/token'
+
+        payload = 'grant_type=client_credentials&client_id='+spnid+'&client_secret='+ spnsecret + '&'
+        payload = payload +'resource=https%3A%2F%2F'+resourcetype+'%2F'
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        r = requests.post(endpoint, headers=headers, data=payload)
+    else: #managed identity auth flow requires now client creds so just initialise this variable
+        endpoint = os.environ["IDENTITY_ENDPOINT"]
+        endpoint = endpoint +'?resource=https://'+resourcetype+'/&api-version=2019-08-01'
+        identity_header_val = os.environ["IDENTITY_HEADER"]
+        headers = {'X-IDENTITY-HEADER': identity_header_val}
+        #payload = 'resource=https%3A%2F%2F'+resourcetype+'&api-version=2019-08-01'
+        payload = ''
+        r = requests.get(endpoint, headers=headers)
+
+
+    logging.info('AAD request to endpoint ='+ endpoint + ' with payload = '+ payload )
+    logging.info(str(r))
     response = r.json()
-    print("Obtaining AAD bearer token for resource "+ resourcetype + "...")
+    logging.info("Obtaining AAD bearer token for resource "+ resourcetype + "...")
     try:
       bearertoken = response["access_token"]
     except KeyError:
-      print("Error obtaining bearer token: "+ response)
-    #print(bearertoken)
-    print("Bearer token obtained.\n")
+      logging.error("Error coud not obtain bearer token, check identity has necessary permissions: "+ str(response))
+    #logging.info(bearertoken)
+    logging.info("Bearer token obtained.\n")
     return bearertoken
 
 # a variation of the function above which access a dictionary object of users and groups so that we can set the ACLs in bulk with a comma seprated list of ACEs (access control entries)
-def setADLSBulkPermissions(aadtoken, adlpath, acentry, trans_action, trans_mode,lcursor, lcnxn):
+def setADLSBulkPermissions(aadtoken, adlpath, acentry, trans_action, trans_mode):
         # Read documentation here -> https://docs.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/update
     if aadtoken and acentry and adlpath and trans_action and trans_mode:
         puuid = str(uuid.uuid4())
         headers = {'x-ms-version': '2019-12-12','Authorization': 'Bearer %s' % aadtoken, 'x-ms-acl':acentry,'x-ms-client-request-id': '%s' % puuid}
         request_path = adlpath+"?action="+ trans_action + "&mode=" + trans_mode
-        print("Setting ACLs  " + acentry + " on " +adlpath + "...")
+        logging.info("Setting ACLs  " + acentry + " on " +adlpath + "...")
         t1_start = perf_counter() 
         if devstage == 'live':
             r = requests.patch(request_path, headers=headers)
-            response = r.json()
-            t1_stop = perf_counter()
-            #print(r.text)
+            #logging.info(r.text)
             if r.status_code == 200:
-                logging.info("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
-                return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
+                if trans_action =='setAccessControlRecursive':
+                    response = r.json()
+                    t1_stop = perf_counter()
+                    logging.info("Response Code: " + str(r.status_code) + "\nDirectories successful:" + str(response["directoriesSuccessful"]) + "\nFiles successful: "+ str(response["filesSuccessful"]) + "\nFailed entries: " + str(response["failedEntries"]) + "\nFailure Count: "+ str(response["failureCount"]) + f"\nCompleted in {t1_stop-t1_start:.3f} seconds\n")  
+                    return(int(response["filesSuccessful"]) + int(response["directoriesSuccessful"]))
+                else: return(1) #only one object (folder) was successfully updated. json body is only returned for the recursive operation, see documentation link above
             else:
                 logging.error("Error: " + str(r.text))
                 raise Exception("Error while trying to set ACLs " + str(r.text))
@@ -211,6 +251,7 @@ def setADLSBulkPermissions(aadtoken, adlpath, acentry, trans_action, trans_mode,
         logging.warning("Warning: Could not set ACLs as no users/groups were supplied in the ACE entry. This can happen when all users are either in the exclusion list or their IDs could not be found in AAD.")    
         return(-1)
     #aces = spntype+':'+spn+spnaccsuffix + ':'+permissions+',default:'+spntype+':'+spn+spnaccsuffix + ':'+permissions,'x-ms-client-request-id': '%s' % puuid
+
 
 async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,proc_start,trans_mode, pContinuationToken):
     # the progress callback is invoked each time a batch is completed 
@@ -268,16 +309,19 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
                                                                                         continuation_token = pContinuationToken,
                                                                                         progress_hook=progress_callback,
                                                                                         batch_size=2000)
+
             else:
                 acl_change_result = await directory_client.update_access_control_recursive(acl=acl,
                                                                                         progress_hook=progress_callback,
                                                                                         batch_size=2000)
+
         elif trans_mode == 'remove':
             if pContinuationToken != '':
                 acl_change_result = await directory_client.remove_access_control_recursive(acl=acl,
                                                                                         continuation_token = pContinuationToken,
                                                                                         progress_hook=progress_callback,
                                                                                         batch_size=2000)
+
             else:
                 acl_change_result = await directory_client.remove_access_control_recursive(acl=acl,
                                                                                         progress_hook=progress_callback,
@@ -312,11 +356,13 @@ async def set_recursive_access_control(filesystem_client,dir_name, acl,transid,p
                                                                         continuation_token=error.continuation_token,
                                                                         progress_hook=progress_callback,
                                                                         batch_size=2000)
-            elif trans_mode == 'remove':       
-                    await directory_client.remove_access_control_recursive(acl=acl,
-                                                            continuation_token=error.continuation_token,
-                                                            progress_hook=progress_callback,
-                                                            batch_size=2000)                                                                 
+
+            elif trans_mode == 'remove':  
+                await directory_client.remove_access_control_recursive(acl=acl,
+                                                        continuation_token=error.continuation_token,
+                                                        progress_hook=progress_callback,
+                                                        batch_size=2000)                                                                 
+
         else: None                                                            
         await directory_client.close()
  
