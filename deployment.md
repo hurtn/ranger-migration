@@ -44,6 +44,7 @@ General Purpose Standard-series (Gen 5) (256 GB, 4 vCores
       - CREATE USER [Function App name] FROM EXTERNAL PROVIDER;
       - GRANT CONTROL ON DATABASE::[centricapolicydb] TO [Function App name];
    - Ensure the database is initialised using the initialise function application (see notes below) using this above user in the connection string details. This will ensure that CDC is enabled to the policy table for the correct user.
+   - If you wish to extend the default retention period for CDC history (defaults to 3 days 11 hours), please see [the following document](https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sys-sp-cdc-change-job-transact-sql?redirectedfrom=MSDN&view=sql-server-ver15).
 
 6. Target __ADLS storage account__ where the ACLs will be applied (may exist already)
 7. Ranger and Hive services, usually deployed as part of __HDInsight__.
