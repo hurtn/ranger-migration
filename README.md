@@ -8,7 +8,7 @@
 
 The intended purpose of this tool is to periodically synchronise resource based Apache Ranger<sup>TM</sup> policies with Azure Datalake Storage (ADLS) ACLs. 
 There are three main Python applications in this repo which support this:
-1. storePolicies: retrieve policies from one or Ranger policy stores and store these in a SQL database table
+1. storePolicies: retrieve policies from one or more Ranger policy stores and store these in a SQL database table
 2. applyPolicies: read changes from the policy table (using the CDC API) and create, validate and queue transactions (work items) which encapsulate the permissions to be applied as Storage ACLs
 3. aclWorkers: process work items from the queue by modifying or removing ACLs on ADLS
 
