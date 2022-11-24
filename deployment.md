@@ -42,7 +42,7 @@ General Purpose Standard-series (Gen 5) (256 GB, 4 vCores
   - You can use the managed identity of the function app or create a separate database user and provide the appropriate permissions as shown below. Note that the connection string specified in the function app configuration will use the authentication flag as described in step 4 of configuring the function app settings below
   - *Create the user and provide necessary permissions e.g.:
       - CREATE USER [Function App name] FROM EXTERNAL PROVIDER;
-      - GRANT CONTROL ON DATABASE::[centricapolicydb] TO [Function App name];
+      - GRANT CONTROL ON DATABASE::[Database_Name] TO [Function App name];
    - Ensure the database is initialised using the initialise function application (see notes below) using this above user in the connection string details. This will ensure that CDC is enabled to the policy table for the correct user.
    - If you wish to extend the default retention period for CDC history (defaults to 3 days 11 hours), please see [the following document](https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sys-sp-cdc-change-job-transact-sql?redirectedfrom=MSDN&view=sql-server-ver15).
 
